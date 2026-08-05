@@ -10,7 +10,7 @@ best in class responce time
 
 ## Easy setup GUI
 The GUI makes it easy to set up everything on this app, accounts , tables and map. and expose ports , use cermagic to get certificates
-
+![setup](./screenshorts/setup.png)
 ## detailed menus
 Server Gui offer menus that would fit your every need.
 ![server](./screenshorts/server2.png)
