@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+
+ <link rel="icon"" href="favicon.png" type="image/png">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Edit/Add Reel</title>
+    <link rel="stylesheet" href="sugstyle.css">
+    <style>
+        body { font-family: system-ui, sans-serif; background-color: #f4f4f9; padding: 2rem; margin: 0; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }
+        .header a { text-decoration: none; color: #4A90D9; font-weight: bold; }
+        
+        .form-row { display: flex; gap: 1rem; margin-bottom: 1rem; }
+        .form-group { flex: 1; display: flex; flex-direction: column; }
+        label { margin-bottom: 0.3rem; font-weight: bold; font-size: 0.9rem; }
+        input, select { padding: 0.6rem; border: 1px solid #ccc; border-radius: 4px; font-size: 1rem; }
+        input[readonly] { background-color: #e9ecef; cursor: not-allowed; }
+        
+        .party-group { display: flex; gap: 0.5rem; }
+        .party-group select { flex: 1; }
+        .btn-small { padding: 0 0.5rem; background: #2ecc71; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        
+        .actions { margin-top: 2rem; display: flex; gap: 1rem; }
+        .btn { flex: 1; padding: 0.75rem; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer; color: white; }
+        .btn-save { background: #4A90D9; }
+        .btn-print { background: #9b59b6; display: none; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h2 id="pageTitle">Add New Reel</h2>
+        <a href="index.html">&larr; Back to Dashboard</a>
+    </div>
+
+    <div class="form-row">
+        <div class="form-group">
+            <label>Month Code</label>
+            <select id="month_code" onchange="updateReelId()"></select>
+        </div>
+        <div class="form-group">
+            <label>Item Number</label>
+            <input type="number" id="item_number" onkeyup="updateReelId()" onchange="updateReelId()">
+        </div>
+    </div>
+    
+    <div class="form-row">
+        <div class="form-group">
+            <label>Reel ID (Auto-generated)</label>
+            <input type="text" id="reel_id" readonly>
+        </div>
+    </div>
+
+    <div class="form-row">
+        <div class="form-group">
+            <label>Size (cm)</label>
+            <input type="number" step="0.1" id="size_cm">
+        </div>
+        <div class="form-group">
+            <label>Weight (kg)</label>
+            <input type="number" step="0.1" id="weight_kg">
+        </div>
+    </div>
+
+    <div class="form-row">
+        <div class="form-group">
+            <label>GSM</label>
+            <input type="number" step="0.1" id="gsm">
+        </div>
+        <div class="form-group">
+            <label>BF</label>
+            <input type="text" id="bf">
+        </div>
+    </div>
+
+    <div class="form-row">
+        <div class="form-group">
+            <label>Colour</label>
+            <input type="text" id="colour">
+        </div>
+        <div class="form-group">
+            <label>Quality</label>
+            <input type="text" id="quality">
+        </div>
+    </div>
+
+    <div class="form-row">
+        <div class="form-group">
+            <label>Party</label>
+            <div class="party-group">
+                <select id="party"></select>
+                <button type="button" class="btn-small" onclick="addParty()">+ Add</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="form-row">
+        <div class="form-group">
+            <label>Date</label>
+            <input type="date" id="date">
+        </div>
+        <div class="form-group">
+            <label>Time</label>
+            <input type="time" step="1" id="time">
+        </div>
+    </div>
+
+    <div class="actions">
+        <button class="btn btn-save" onclick="saveReel()">Save Reel</button>
+        <button class="btn btn-print" id="printBtn" onclick="printSavedReel()">Print Label</button>
+    </div>
+</div>
+<script src="sug.js"></script>
+<script>
+    const getCookie = (name) => {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) return decodeURIComponent(parts.pop().split(';').shift());
+        return null;
+    };
+
+    const serverUrl = getCookie('server_url');
+    const userId = getCookie('user_id');
+    const key = getCookie('auth_key');
+    const editingId = getCookie('editing');
+
+    if (!serverUrl || !userId) window.location.href = 'login.html';
+
+    let currentReelData = null;
+
+    async function init() {
+        await loadMonthCodes();
+        await loadParties();
+        
+        const now = new Date();
+        document.getElementById('date').value = now.toISOString().split('T')[0];
+        document.getElementById('time').value = now.toTimeString().split(' ')[0];
+
+        if (editingId) {
+            document.getElementById('pageTitle').innerText = "Edit Reel";
+            await loadReelToEdit(editingId);
+        }
+    }
+
+    async function loadMonthCodes() {
+        const res = await fetch(`${serverUrl}/api/monthcodes?user_id=${userId}&auth_key=${encodeURIComponent(key)}`);
+        const codes = await res.json();
+        const select = document.getElementById('month_code');
+        select.innerHTML = '<option value="">Select Month Code</option>';
+        codes.forEach(c => {
+            select.innerHTML += `<option value="${c.code}">${c.code}</option>`;
+        });
+    }
+
+    async function loadParties() {
+        const res = await fetch(`${serverUrl}/api/parties?user_id=${userId}&auth_key=${encodeURIComponent(key)}`);
+        const parties = await res.json();
+        const select = document.getElementById('party');
+        select.innerHTML = '<option value="">Select Party</option>';
+        parties.forEach(p => {
+            select.innerHTML += `<option value="${p.name}">${p.name}</option>`;
+        });
+    }
+//loading sugjs for suggestions
+sugge("bf", false, ["18", "20", "22", "24", "26", "28", "30"]);
+sugge("colour",false,["Natural","Golden Yellow"]);
+sugge("quality",false,["Craftboard","Liner Paper","Fluting paper","Fluting/Liner"]);
+
+    async function loadReelToEdit(id) {
+        const res = await fetch(`${serverUrl}/api/search`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                user_id: parseInt(userId), auth_key: key,
+                target: "reels", match: "all",
+                filters: [{ field: "id", op: "eq", value: parseInt(id) }]
+            })
+        });
+        const data = await res.json();
+        if (data.results && data.results.length > 0) {
+            const reel = data.results[0];
+            document.getElementById('month_code').value = reel.month_code;
+            document.getElementById('item_number').value = reel.item_number;
+            document.getElementById('reel_id').value = reel.reel_id;
+            document.getElementById('size_cm').value = reel.size_cm;
+            document.getElementById('weight_kg').value = reel.weight_kg;
+            document.getElementById('gsm').value = reel.gsm;
+            document.getElementById('bf').value = reel.bf;
+            document.getElementById('colour').value = reel.colour;
+            document.getElementById('quality').value = reel.quality;
+            document.getElementById('party').value = reel.party;
+            document.getElementById('date').value = reel.date;
+            document.getElementById('time').value = reel.time;
+        }
+    }
+
+    function updateReelId() {
+        const mc = document.getElementById('month_code').value;
+        const item = document.getElementById('item_number').value;
+        if (mc && item) {
+            document.getElementById('reel_id').value = `${mc}-${item}`;
+        } else {
+            document.getElementById('reel_id').value = '';
+        }
+    }
+
+    async function addParty() {
+        const name = prompt("Enter new party name:");
+        if (!name) return;
+        await fetch(`${serverUrl}/api/party/add`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ user_id: parseInt(userId), auth_key: key, party: { name: name } })
+        });
+        await loadParties();
+        document.getElementById('party').value = name;
+    }
+
+    async function saveReel() {
+        const reel = {
+            reel_id: document.getElementById('reel_id').value,
+            month_code: document.getElementById('month_code').value,
+            item_number: parseInt(document.getElementById('item_number').value) || 0,
+            size_cm: parseFloat(document.getElementById('size_cm').value) || 0,
+            weight_kg: parseFloat(document.getElementById('weight_kg').value) || 0,
+            gsm: parseFloat(document.getElementById('gsm').value) || 0,
+            bf: document.getElementById('bf').value,
+            colour: document.getElementById('colour').value,
+            quality: document.getElementById('quality').value,
+            party: document.getElementById('party').value,
+            date: document.getElementById('date').value,
+            time: document.getElementById('time').value
+        };
+
+        if (!reel.reel_id) {
+            alert("Reel ID is required.");
+            return;
+        }
+
+        const endpoint = editingId ? '/api/reel/modify' : '/api/reel/add';
+        if (editingId) reel.id = parseInt(editingId);
+
+        const res = await fetch(`${serverUrl}${endpoint}`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ user_id: parseInt(userId), auth_key: key, reel: reel })
+        });
+
+        const result = await res.json();
+        if (result.success) {
+            alert("Saved successfully!");
+            document.getElementById('printBtn').style.display = 'block';
+            currentReelData = reel;
+            if (!editingId) currentReelData.id = result.id;
+        } else {
+            alert("Error saving reel.");
+        }
+    }
+
+    async function printSavedReel() {
+        if (!currentReelData) return;
+        const btn = document.getElementById('printBtn');
+        btn.innerText = "Loading...";
+//using the lookupqr in the server
+        const qrText = `${serverUrl}/lookupqr?id=${encodeURIComponent(currentReelData.reel_id)}`;
+        const qrUrl = `${serverUrl}/api/qrcode?user_id=${userId}&auth_key=${encodeURIComponent(key)}&text=${encodeURIComponent(qrText)}&size=512`;
+        
+        try {
+            const response = await fetch(qrUrl);
+            const blob = await response.blob();
+            const imgUrl = URL.createObjectURL(blob);
+
+            const printWin = window.open('', '_blank');
+            printWin.document.write(`
+                 <html>
+                <head><title>Print Label</title></head>
+                <body style="font-family: sans-serif; text-align: center; padding: 20px;">
+                    <img src="${imgUrl}" style="width: 300px; height: 300px; margin-bottom: 20px;" />
+                    <h1 style="margin: 5px 0;">${currentReelData.reel_id}</h1>
+                    <h3 style="margin: 5px 0; color: #555;">Party: ${currentReelData.party}</h3>
+                    <p style="font-size: 1.2rem;">Weight: <strong>${currentReelData.weight_kg} kg</strong> | GSM: <strong>${currentReelData.gsm}</strong></p>
+                    <p style="font-size: 1.2rem;">Colour: <strong>${currentReelData.colour}</strong> |Size: <strong>${currentReelData.size_cm} cm</strong> </p>
+                    <p style="font-size: 1.2rem;">Quality: <strong>${currentReelData.quality} </strong> | BF: <strong>${currentReelData.bf}</strong></p>
+                    <p>Date: ${currentReelData.date} ${currentReelData.time}</p>
+                    <script>
+                        window.onload = function() { window.print(); window.close(); }
+                    <\/script>
+                </body>
+                </html>
+            `);
+            printWin.document.close();
+        } catch(e) {
+            alert("Failed to generate QR Code");
+        }
+        btn.innerText = "Print Label";
+    }
+
+    init();
+</script>
+</body>
+</html>

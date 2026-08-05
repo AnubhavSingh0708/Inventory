@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Billed Reels Archive</title>
+    <style>
+        body { font-family: system-ui, sans-serif; background: #f4f6f8; margin: 0; padding: 2rem; color: #1a252f; }
+        .container { max-width: 1000px; margin: 0 auto; background: #fff; padding: 1.5rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { margin-top: 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.5rem; }
+        table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e2e8f0; }
+        th { background-color: #f8fafc; font-weight: bold; color: #64748b; text-transform: uppercase; font-size: 0.85rem; }
+        tr:hover { background-color: #f1f5f9; cursor: pointer; }
+        
+        /* Modal Styles */
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 1000; }
+        .modal { background: #fff; padding: 2rem; border-radius: 8px; width: 90%; max-width: 500px; box-shadow: 0 10px 15px rgba(0,0,0,0.2); }
+        .modal h2 { margin-top: 0; }
+        .modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem; }
+        .label { font-weight: bold; color: #64748b; font-size: 0.85rem; text-transform: uppercase; }
+        .value { font-size: 1.1rem; color: #0f172a; }
+        .close-btn { margin-top: 1.5rem; width: 100%; padding: 10px; background: #e2e8f0; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .close-btn:hover { background: #cbd5e1; }
+        .badge { background: #22c55e; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: bold;}
+
+        /* Load More Button Styles */
+        .btn-container { text-align: center; margin-top: 1.5rem; }
+        .load-more-btn { 
+            padding: 10px 24px; 
+            background: #2563eb; 
+            color: #fff; 
+            border: none; 
+            border-radius: 6px; 
+            font-weight: bold; 
+            font-size: 0.95rem; 
+            cursor: pointer; 
+            transition: background 0.2s;
+            display: none; 
+        }
+        .load-more-btn:hover { background: #1d4ed8; }
+        .load-more-btn:disabled { background: #94a3b8; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Billed Reels Archive</h1>
+    <table>
+        <thead>
+            <tr>
+                <th>Reel ID</th>
+                <th>Size (CM)</th>
+                <th>Weight (KG)</th>
+                <th>Billed Time</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody id="table-body">
+            <tr><td colspan="5">Loading...</td></tr>
+        </tbody>
+    </table>
+
+    <!-- Load More Button -->
+    <div class="btn-container">
+        <button id="load-more-btn" class="load-more-btn" onclick="loadData()">Load More</button>
+    </div>
+</div>
+
+<!-- Details Modal -->
+<div class="modal-overlay" id="details-modal" onclick="closeModal(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+        <h2 id="modal-title">Reel Details</h2>
+        <div class="modal-grid" id="modal-content">
+            <!-- Populated via JS -->
+        </div>
+        <button class="close-btn" onclick="document.getElementById('details-modal').style.display='none'">Close</button>
+    </div>
+</div>
+
+<script>
+    // Utility to get cookies (now with decoding)
+    function getCookie(name) {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) {
+            let val = parts.pop().split(';').shift();
+            // Decode URL encoding (%3A%2F%2F -> ://)
+            val = decodeURIComponent(val);
+            // Remove extra quotes if present
+            val = val.replace(/^"|"$/g, '');
+            return val;
+        }
+        return null;
+    }
+
+    const authKey = getCookie('auth_key');
+    const userId = parseInt(getCookie('user_id'), 10);
+    
+    // Get serverUrl, defaulting to current origin if missing
+    let serverUrl = getCookie('server_url') || '';
+    
+    // Remove trailing slash if present
+    if (serverUrl.endsWith('/')) {
+        serverUrl = serverUrl.slice(0, -1);
+    }
+
+    let reelsData = [];
+    let offset = 0;
+    const limit = 100;
+    let isLoading = false;
+
+    async function loadData() {
+        if (isLoading) return;
+
+        if (!authKey || isNaN(userId)) {
+            alert("Authentication credentials missing. Please log in.");
+            return;
+        }
+
+        const loadBtn = document.getElementById('load-more-btn');
+        isLoading = true;
+
+        if (loadBtn) {
+            loadBtn.disabled = true;
+            loadBtn.innerText = 'Loading...';
+        }
+
+        try {
+            const res = await fetch(`${serverUrl}/api/billed_archive?user_id=${userId}&auth_key=${authKey}&limit=${limit}&offset=${offset}`);
+            if (!res.ok) throw new Error("Failed to fetch data");
+            
+            const newBatch = await res.json();
+
+            // Clear loading placeholder on initial fetch
+            if (offset === 0) {
+                document.getElementById('table-body').innerHTML = '';
+            }
+
+            if (!newBatch || newBatch.length === 0) {
+                if (offset === 0) {
+                    document.getElementById('table-body').innerHTML = '<tr><td colspan="5">No archived reels found.</td></tr>';
+                }
+                if (loadBtn) loadBtn.style.display = 'none';
+                return;
+            }
+
+            // Append newly loaded batch
+            reelsData = reelsData.concat(newBatch);
+            appendRows(newBatch);
+
+            // Increment offset by the number of records returned
+            offset += newBatch.length;
+
+            // Hide button if fewer records than limit were returned (end of data)
+            if (loadBtn) {
+                if (newBatch.length < limit) {
+                    loadBtn.style.display = 'none';
+                } else {
+                    loadBtn.style.display = 'inline-block';
+                    loadBtn.disabled = false;
+                    loadBtn.innerText = 'Load More';
+                }
+            }
+
+        } catch (err) {
+            console.error(err);
+            if (offset === 0) {
+                document.getElementById('table-body').innerHTML = `<tr><td colspan="5" style="color:red;">Error loading data: ${err.message}</td></tr>`;
+            } else {
+                alert(`Error loading more data: ${err.message}`);
+            }
+
+            if (loadBtn) {
+                loadBtn.disabled = false;
+                loadBtn.innerText = 'Load More';
+            }
+        } finally {
+            isLoading = false;
+        }
+    }
+
+    function appendRows(batch) {
+        const tbody = document.getElementById('table-body');
+
+        batch.forEach(reel => {
+            const tr = document.createElement('tr');
+            tr.onclick = () => showDetails(reel); // Left click shows details
+
+            tr.innerHTML = `
+                <td><strong>${reel.reel_id}</strong></td>
+                <td>${reel.size_cm ? reel.size_cm.toFixed(2) : '0.00'}</td>
+                <td>${reel.weight_kg ? reel.weight_kg.toFixed(2) : '0.00'}</td>
+                <td>${reel.billed_date} ${reel.billed_time}</td>
+                <td><span class="badge">ARCHIVED</span></td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    function showDetails(reel) {
+        document.getElementById('modal-title').innerText = `Reel #${reel.reel_id}`;
+        document.getElementById('modal-content').innerHTML = `
+            <div><div class="label">Size (CM)</div><div class="value">${reel.size_cm}</div></div>
+            <div><div class="label">GSM</div><div class="value">${reel.gsm}</div></div>
+            <div><div class="label">BF</div><div class="value">${reel.bf}</div></div>
+            <div><div class="label">Colour</div><div class="value">${reel.colour}</div></div>
+            <div><div class="label">Weight (KG)</div><div class="value">${reel.weight_kg}</div></div>
+            <div><div class="label">Quality</div><div class="value">${reel.quality}</div></div>
+            <div><div class="label">Party</div><div class="value">${reel.party || 'N/A'}</div></div>
+            <div><div class="label">Mfg Date</div><div class="value">${reel.date} ${reel.time}</div></div>
+            
+            <div style="grid-column: span 2; margin-top: 10px; border-top: 1px solid #e2e8f0; padding-top: 10px;">
+                <div class="label" style="color:#ea580c;">Dispatch Info</div>
+                <div class="value">${reel.dispatch_date} at ${reel.dispatch_time}</div>
+            </div>
+            
+            <div style="grid-column: span 2; margin-top: 10px; border-top: 1px solid #e2e8f0; padding-top: 10px;">
+                <div class="label" style="color:#16a34a;">Billed Info</div>
+                <div class="value">${reel.billed_date} at ${reel.billed_time}</div>
+            </div>
+        `;
+        document.getElementById('details-modal').style.display = 'flex';
+    }
+
+    function closeModal(e) {
+        if (e.target.id === 'details-modal') {
+            document.getElementById('details-modal').style.display = 'none';
+        }
+    }
+
+    // Init
+    loadData();
+</script>
+
+</body>
+</html>

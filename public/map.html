@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Map - Inventory Manager</title>
+    <link rel="icon" href="favicon.png" type="image/png">
+    <style>
+        body { font-family: system-ui, sans-serif; background-color: #f4f4f9; margin: 0; padding: 1rem; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+        .map-table { border-collapse: separate; border-spacing: 10px; width: 100%; }
+        
+        .map-cell { 
+            border-radius: 12px; padding: 10px; min-height: 120px; min-width: 180px; 
+            vertical-align: top; box-shadow: 0 2px 5px rgba(0,0,0,0.1); color: white;
+            position: relative;
+        }
+        
+        .cell-header { font-weight: bold; margin-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.3); padding-bottom: 5px; display: flex; justify-content: space-between; align-items: center; }
+        
+        .action-btn { background: rgba(255,255,255,0.3); border: none; color: white; cursor: pointer; border-radius: 5px; padding: 4px 10px; font-size: 0.8rem; }
+        .action-btn:hover { background: rgba(255,255,255,0.5); }
+        
+        /* Layout Containers */
+        #map-view-container { position: relative; width: 100%; display: flex; justify-content: center; align-items: center; min-height: 400px; }
+        #svg-wrapper { position: relative; display: inline-block; }
+        #svg-wrapper svg { max-width: 100%; height: auto; display: block; }
+        
+        /* Interactive SVG Shapes */
+        .table-shape { cursor: pointer; transition: opacity 0.2s, stroke 0.2s; }
+        .table-shape:hover { opacity: 0.85; stroke: #4A90D9; stroke-width: 3px; }
+
+        /* Pulsing Pin Marker on SVG */
+        .pin-marker {
+            position: absolute;
+            width: 36px;
+            height: 36px;
+            transform: translate(-50%, -100%);
+            pointer-events: none;
+            z-index: 10;
+            animation: pinPulse 1s infinite alternate ease-in-out;
+        }
+        @keyframes pinPulse {
+            0% { transform: translate(-50%, -100%) scale(1); filter: drop-shadow(0 0 2px rgba(255, 0, 0, 0.8)); }
+            100% { transform: translate(-50%, -100%) scale(1.35); filter: drop-shadow(0 0 8px rgba(255, 0, 0, 1)); }
+        }
+
+        /* Pyramid/Grid Structure CSS */
+        .pyramid-container { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 5px 0; }
+        .pyramid-row { display: flex; justify-content: center; gap: 4px; }
+        
+        /* Slots in Main Map */
+        .map-cell .slot { width: 32px; height: 32px; border: 1px dashed rgba(255,255,255,0.4); border-radius: 50%; display: flex; justify-content: center; align-items: center; }
+        .map-cell .slot.empty { cursor: pointer; }
+        .map-cell .slot.empty:hover { background: rgba(255,255,255,0.2); }
+        
+        /* Slots in Rearrange Modal */
+        .edit-modal .slot { width: 45px; height: 45px; border: 2px dashed #ccc; border-radius: 50%; display: flex; justify-content: center; align-items: center; transition: all 0.2s; }
+        .edit-modal .slot.empty.drag-over { background: #e0ffe0; border-color: #2ecc71; transform: scale(1.1); }
+        
+        .reel-icon { width: 100%; height: 100%; object-fit: contain; cursor: pointer; transition: transform 0.1s; }
+        .reel-icon:hover { transform: scale(1.15); }
+        .draggable { cursor: grab; }
+        .draggable:active { cursor: grabbing; }
+
+        /* Modal Styles */
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); justify-content: center; align-items: center; z-index: 100; }
+        .modal-content { background: white; padding: 2rem; border-radius: 10px; width: 100%; max-width: 800px; color: black; max-height: 85vh; overflow-y: auto; overflow-x: scroll; }
+        
+        .edit-modal .slot.empty.drag-invalid { 
+             background: #ffe0e0; 
+             border-color: #e74c3c; 
+             cursor: not-allowed; 
+             transform: scale(1.1); 
+        }
+
+        /* Reel Pulse Animation */
+        @keyframes pulse {
+            0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 255, 0, 0.7); }
+            50% { transform: scale(1.4); box-shadow: 0 0 0 15px rgba(255, 255, 0, 0); }
+            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 255, 0, 0); }
+        }
+        .pulse { animation: pulse 1s infinite; border-radius: 50%; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h2 id="view-title">Warehouse Map</h2>
+        <div>
+            <button id="back-btn" onclick="showMapView()" style="display:none; padding: 6px 12px; margin-right: 10px; background:#4A90D9; color:white; border:none; border-radius:5px; cursor:pointer; font-weight:bold;">← Back to Map</button>
+            <a href="index.html" style="text-decoration:none; color:#4A90D9; font-weight:bold;">Home</a>
+        </div>
+    </div>
+    
+    <!-- Initial Map SVG Container -->
+    <div id="map-view-container">
+        <div id="svg-wrapper"></div>
+    </div>
+
+    <!-- Table Grid View Container -->
+    <div id="table-view-container" style="display: none;">
+        <table class="map-table" id="map-table"></table>
+    </div>
+
+    <!-- Rearrange Modal -->
+    <div class="modal" id="cellModal">
+        <div class="modal-content edit-modal">
+            <h3 id="cellTitle">Rearrange Cell</h3>
+            <p style="font-size: 0.9rem; color: #666; text-align: center;">Drag and drop reels to snap them to a new position.</p>
+            <div id="dragContainer" class="pyramid-container" style="margin: 20px 0;"></div>
+            <hr>
+            <div style="display:flex; justify-content:flex-end;">
+                <button onclick="closeModal('cellModal')" style="padding:8px 16px; background:#4A90D9; color:white; border:none; border-radius:5px; cursor:pointer;">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Reel to Blank Slot Modal -->
+    <div class="modal" id="addReelModal">
+        <div class="modal-content">
+            <h3>Add Reel to Slot</h3>
+            <p id="addSlotDetails" style="margin-bottom:10px; font-weight:bold;"></p>
+            <select id="unassignedReels" style="width:100%; padding:8px; margin-bottom:15px; border-radius: 5px;"></select>
+            <button onclick="confirmAddReel()" style="width:100%; padding:10px; background:#2ecc71; color:white; border:none; border-radius:5px; font-weight:bold; cursor:pointer;">+ Snap to Position</button>
+            <div style="display:flex; justify-content:center; margin-top:15px;">
+                <button onclick="closeModal('addReelModal')" style="padding:8px 16px; cursor:pointer;">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Reel Info Modal -->
+    <div class="modal" id="reelModal">
+        <div class="modal-content">
+            <h3>Reel Details</h3>
+            <pre id="reelDetailsText" style="white-space: pre-wrap; background: #f4f4f9; padding: 10px; border-radius: 5px;"></pre>
+            <!-- Reel Info Modal Footer Buttons -->
+            <div style="display:flex; justify-content:space-between; margin-top:15px; gap: 10px;">
+                <button onclick="closeModal('reelModal')" style="padding:8px 16px; cursor:pointer;">Close</button>
+                <div style="display:flex; gap: 10px;">
+                    <button onclick="dispatchReel()" style="background:#27ae60; color:white; border:none; padding:8px 16px; border-radius:5px; cursor:pointer; font-weight:bold;">Dispatch Reel</button>
+                    <button onclick="removeReelFromCell()" style="background:#E74C3C; color:white; border:none; padding:8px 16px; border-radius:5px; cursor:pointer;">Remove from Cell</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function getCookie(name) {
+            let match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+            if (match) return decodeURIComponent(match[2]);
+            return null;
+        }
+
+        function deleteCookie(name) {
+            document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
+        }
+
+        const url = getCookie('server_url');
+        const uid = getCookie('user_id');
+        const auth = getCookie('auth_key');
+        let searchItem = getCookie('search_item');
+        let searchMonth = getCookie('search_month');
+
+        let tablesList = [];
+        let currentTable = null; // Currently selected table metadata
+        let currentTableData = [];
+        let searchTargetTableId = null;
+
+        let maxRows = 4;
+        let maxCols = 6;
+        
+        let editingCell = null;
+        let activeReel = null;
+        let pendingAddSlot = null;
+
+        async function initMap() {
+            try {
+                // Fetch Map SVG and Tables list in parallel
+                const [mapRes, tablesRes] = await Promise.all([
+                    fetch(`${url}/api/map?user_id=${uid}&auth_key=${auth}`),
+                    fetch(`${url}/api/tables?user_id=${uid}&auth_key=${auth}`)
+                ]);
+
+                if (mapRes.ok && tablesRes.ok) {
+                    const svgContent = await mapRes.text();
+                    tablesList = await tablesRes.json();
+
+                    const wrapper = document.getElementById('svg-wrapper');
+                    wrapper.innerHTML = svgContent;
+
+                    attachMapListeners();
+                    await checkSearchCookie();
+                } else {
+                    console.error("Failed to load map or table metadata.");
+                }
+            } catch (e) {
+                console.error("Error initializing map view:", e);
+            }
+        }
+
+        function attachMapListeners() {
+            const svgWrapper = document.getElementById('svg-wrapper');
+            const shapes = svgWrapper.querySelectorAll('polygon, path, rect, circle, ellipse, polyline');
+
+            shapes.forEach(shape => {
+                const shapeId = shape.getAttribute('id');
+                if (shapeId && shapeId !== 'refpoint1' && shapeId !== 'refpoint2') {
+                    shape.classList.add('table-shape');
+                    shape.onclick = () => loadTable(shapeId);
+                }
+            });
+        }
+
+        async function checkSearchCookie() {
+            if (!searchItem || !searchMonth) return;
+            
+            const targetNumber = parseInt(searchItem);
+
+            try {
+                const tablesRes = await fetch(`${url}/api/tables?user_id=${uid}&auth_key=${auth}`);
+                const tablesData = await tablesRes.json();
+                const tables = Array.isArray(tablesData) ? tablesData : (tablesData.results || []);
+
+                if (tables.length === 0) {
+                    console.warn("No tables found on the server.");
+                    return;
+                }
+
+                let foundTableId = null;
+
+                for (const table of tables) {
+                    const cellsRes = await fetch(`${url}/api/table?user_id=${uid}&auth_key=${auth}&table_id=${table.id}`);
+                    const cellsData = await cellsRes.json();
+                    const cells = Array.isArray(cellsData) ? cellsData : (cellsData.results || []);
+
+                    for (const cell of cells) {
+                        if (cell.items && cell.items.length > 0) {
+                            const hasItem = cell.items.some(item => 
+                                item.number === targetNumber && 
+                                item.month_code === searchMonth
+                            );
+
+                            if (hasItem) {
+                                foundTableId = table.id;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (foundTableId) break;
+                }
+
+                if (foundTableId) {
+                    searchTargetTableId = foundTableId;
+                    renderPulsingPin(searchTargetTableId);
+                } else {
+                    console.log("Client-side search executed, but no matching items were found in any table.");
+                }
+                
+            } catch (e) {
+                console.error("Error performing client-side manual search:", e);
+            }
+        }
+
+        function renderPulsingPin(tableId) {
+            const targetShape = document.getElementById(tableId);
+            
+            if (!targetShape) {
+                console.error(`Shape with ID '${tableId}' not found in the DOM. Check if your SVG is fully loaded.`);
+                return; 
+            }
+
+            const svgWrapper = document.getElementById('svg-wrapper');
+            if (!svgWrapper) return;
+
+            const wrapperRect = svgWrapper.getBoundingClientRect();
+            const shapeRect = targetShape.getBoundingClientRect();
+
+            const centerX = (shapeRect.left + shapeRect.width / 2) - wrapperRect.left;
+            const centerY = (shapeRect.top + shapeRect.height / 2) - wrapperRect.top;
+
+            const pin = document.createElement('img');
+            pin.src = 'assets/pin.png';
+            pin.className = 'pin-marker';
+            
+            pin.style.position = 'absolute'; 
+            pin.style.left = `${centerX}px`;
+            pin.style.top = `${centerY}px`;
+            pin.style.transform = 'translate(-50%, -100%)'; 
+
+            svgWrapper.appendChild(pin);
+        }
+
+        async function loadTable(tableId) {
+            currentTable = tablesList.find(t => t.id === tableId) || { id: tableId, stack_type: 'horizontal' };
+
+            try {
+                const szRes = await fetch(`${url}/api/cellsize?user_id=${uid}&auth_key=${auth}&table_id=${tableId}`);
+                if (szRes.ok) {
+                    const sz = await szRes.json();
+                    maxRows = sz.rows || maxRows;
+                    maxCols = sz.cols || sz.columns || maxCols;
+                    if (sz.stack_type) currentTable.stack_type = sz.stack_type;
+                }
+            } catch (e) {
+                console.warn("Using default stack dimensions.");
+            }
+
+            try {
+                const res = await fetch(`${url}/api/table?user_id=${uid}&auth_key=${auth}&table_id=${tableId}`);
+                const cells = await res.json();
+                currentTableData = cells;
+
+                document.getElementById('map-view-container').style.display = 'none';
+                document.getElementById('table-view-container').style.display = 'block';
+                document.getElementById('back-btn').style.display = 'inline-block';
+                document.getElementById('view-title').innerText = currentTable.name || `Table ${tableId}`;
+
+                renderTable(cells);
+            } catch (e) {
+                console.error("Failed to load table details:", e);
+            }
+        }
+
+        function showMapView() {
+            document.getElementById('map-view-container').style.display = 'flex';
+            document.getElementById('table-view-container').style.display = 'none';
+            document.getElementById('back-btn').style.display = 'none';
+            document.getElementById('view-title').innerText = 'Warehouse Map';
+            currentTable = null;
+        }
+
+        function renderTable(cells) {
+            const table = document.getElementById('map-table');
+            table.innerHTML = '';
+
+            const isVertical = currentTable && currentTable.stack_type === 'vertical';
+            const reelAsset = isVertical ? './assets/reelv.png' : 'assets/reel.png';
+
+            let gridMaxRow = 0, gridMaxCol = 0;
+            cells.forEach(c => { if(c.row > gridMaxRow) gridMaxRow = c.row; if(c.col > gridMaxCol) gridMaxCol = c.col; });
+
+            for (let r = 0; r <= gridMaxRow; r++) {
+                const tr = document.createElement('tr');
+                for (let c = 0; c <= gridMaxCol; c++) {
+                    const td = document.createElement('td');
+                    const cell = cells.find(x => x.row === r && x.col === c);
+
+                    if (cell) {
+                        td.className = 'map-cell';
+                        td.style.backgroundColor = cell.color;
+
+                        let html = `<div class="cell-header">
+                                        <span>Cell ${cell.number}</span>
+                                        <button class="action-btn" onclick="openCellEdit(${r}, ${c})">Rearrange</button>
+                                    </div>`;
+
+                        const filledSet = new Set(cell.items.map(i => `${i.x}-${i.y}`));
+                        html += `<div class="pyramid-container">`;
+
+                        // API updated: Layer y goes from (maxRows - 1) down to 0
+                        for (let y = maxRows - 1; y >= 0; y--) {
+                            let slotsInRow = isVertical ? maxCols : (maxCols - y);
+
+                            let rowHasVisibleElement = false;
+                            // API updated: x goes from 0 to slotsInRow - 1
+                            for (let x = 0; x < slotsInRow; x++) {
+                                const hasItem = filledSet.has(`${x}-${y}`);
+                                const isSupportedEmpty = isVertical || y === 0 || (filledSet.has(`${x}-${y-1}`) && filledSet.has(`${x+1}-${y-1}`));
+
+                                if (hasItem || isSupportedEmpty) {
+                                    rowHasVisibleElement = true;
+                                    break;
+                                }
+                            }
+
+                            if (rowHasVisibleElement) {
+                                html += `<div class="pyramid-row">`;
+                                for (let x = 0; x < slotsInRow; x++) {
+                                    const item = cell.items.find(i => i.x === x && i.y === y);
+
+                                    if (item) {
+                                        const isSearched = (item.number == searchItem && item.month_code === searchMonth);
+                                        const pulseClass = isSearched ? 'pulse' : '';
+                                        html += `<div class="slot filled">
+                                                    <img src="${reelAsset}" class="reel-icon ${pulseClass}" 
+                                                    title="Item: ${item.number} | Month: ${item.month_code}" 
+                                                    onclick="viewReel(${item.number}, '${item.month_code}', ${r}, ${c})">
+                                                 </div>`;
+                                    } else {
+                                        const isVisible = isVertical || y === 0 || (filledSet.has(`${x}-${y-1}`) && filledSet.has(`${x+1}-${y-1}`));
+                                        if (isVisible) {
+                                            html += `<div class="slot empty" title="Blank Slot - Click to Add" onclick="openAddModal(${r}, ${c}, ${x}, ${y})"></div>`;
+                                        } else {
+                                            html += `<div class="slot" style="visibility: hidden;"></div>`;
+                                        }
+                                    }
+                                }
+                                html += `</div>`;
+                            }
+                        }
+                        html += `</div>`;
+                        td.innerHTML = html;
+                    }
+                    tr.appendChild(td);
+                }
+                table.appendChild(tr);
+            }
+
+            const pulsedElement = document.querySelector('.pulse');
+            if (pulsedElement) {
+                setTimeout(() => {
+                    pulsedElement.classList.remove('pulse');
+                    deleteCookie('search_item');
+                    deleteCookie('search_month');
+                    searchItem = null;
+                    searchMonth = null;
+                }, 5000);
+            }
+        }
+
+        async function openAddModal(r, c, x, y) {
+            pendingAddSlot = { r, c, x, y };
+            document.getElementById('addSlotDetails').innerText = `Target: Cell Grid [${r}, ${c}] -> Layer ${y}, Slot ${x}`;
+            await populateUnassignedList();
+            document.getElementById('addReelModal').style.display = 'flex';
+        }
+
+        async function populateUnassignedList() {
+            const select = document.getElementById('unassignedReels');
+            select.innerHTML = '<option value="">Loading unassigned reels...</option>';
+
+            try {
+                const res = await fetch(`${url}/api/reels/unassigned?user_id=${uid}&auth_key=${auth}`);
+                
+                if (!res.ok) {
+                    throw new Error(`Server status ${res.status}`);
+                }
+
+                const reels = await res.json();
+
+                if (!Array.isArray(reels) || reels.length === 0) {
+                    select.innerHTML = '<option value="">No unassigned reels available</option>';
+                    return;
+                }
+
+                select.innerHTML = '<option value="">-- Select Unassigned Reel --</option>';
+                reels.forEach(reel => {
+                    const opt = document.createElement('option');
+                    opt.value = JSON.stringify({ number: reel.item_number, month_code: reel.month_code });
+                    opt.innerText = `ID: ${reel.reel_id} (Item: ${reel.item_number}, ${reel.month_code})`;
+                    select.appendChild(opt);
+                });
+
+            } catch (e) {
+                console.error("Error fetching unassigned reels:", e);
+                select.innerHTML = '<option value="">Error loading unassigned reels</option>';
+            }
+        }
+
+        async function confirmAddReel() {
+            const val = document.getElementById('unassignedReels').value;
+            if (!val || !pendingAddSlot || !currentTable) return;
+            const data = JSON.parse(val);
+            
+            const reqPayload = {
+                user_id: parseInt(uid),
+                auth_key: auth,
+                table_id: currentTable.id,
+                item: parseInt(data.number),
+                month_code: data.month_code,
+                row: pendingAddSlot.r,
+                col: pendingAddSlot.c,
+                x: pendingAddSlot.x,
+                y: pendingAddSlot.y
+            };
+            
+            const res = await fetch(`${url}/api/add`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(reqPayload)
+            });
+            
+            if (res.ok) { 
+                closeModal('addReelModal'); 
+                await loadTable(currentTable.id); 
+            }
+        }
+
+        function openCellEdit(r, c) {
+            editingCell = currentTableData.find(x => x.row === r && x.col === c);
+            document.getElementById('cellTitle').innerText = `Rearrange Cell ${editingCell.number}`;
+            
+            const container = document.getElementById('dragContainer');
+            container.innerHTML = '';
+            
+            const isVertical = currentTable && currentTable.stack_type === 'vertical';
+            const reelAsset = isVertical ? './assets/reelv.png' : 'assets/reel.png';
+            const filledSet = new Set(editingCell.items.map(i => `${i.x}-${i.y}`));
+            
+            // API updated: y goes from (maxRows - 1) down to 0
+            for (let y = maxRows - 1; y >= 0; y--) {
+                const rowDiv = document.createElement('div');
+                rowDiv.className = 'pyramid-row';
+                let slotsInRow = isVertical ? maxCols : (maxCols - y);
+                
+                // API updated: x goes from 0 to slotsInRow - 1
+                for (let x = 0; x < slotsInRow; x++) {
+                    const item = editingCell.items.find(i => i.x === x && i.y === y);
+                    const slot = document.createElement('div');
+                    
+                    if (item) {
+                        slot.className = 'slot filled';
+                        const img = document.createElement('img');
+                        img.src = reelAsset;
+                        img.className = 'reel-icon draggable';
+                        img.draggable = true;
+                        
+                        img.ondragstart = (e) => {
+                            e.dataTransfer.setData('application/json', JSON.stringify({
+                                item: item.number, fromX: x, fromY: y, fromRow: r, fromCol: c
+                            }));
+                        };
+                        slot.appendChild(img);
+                    } else {
+                        slot.className = 'slot empty';
+                        const isSupported = isVertical || y === 0 || (filledSet.has(`${x}-${y-1}`) && filledSet.has(`${x+1}-${y-1}`));
+
+                        slot.ondragover = (e) => { 
+                            e.preventDefault(); 
+                            if (isSupported) {
+                                slot.classList.add('drag-over'); 
+                                e.dataTransfer.dropEffect = 'move';
+                            } else {
+                                slot.classList.add('drag-invalid');
+                                e.dataTransfer.dropEffect = 'none';
+                            }
+                        };
+                        
+                        slot.ondragleave = () => { slot.classList.remove('drag-over', 'drag-invalid'); };
+                        
+                        slot.ondrop = (e) => {
+                            e.preventDefault();
+                            slot.classList.remove('drag-over', 'drag-invalid');
+                            if (!isSupported) return; 
+
+                            const data = JSON.parse(e.dataTransfer.getData('application/json'));
+                            executeReelMove(data.fromRow, data.fromCol, r, c, data.item, data.fromX, data.fromY, x, y);
+                        };
+                    }
+                    rowDiv.appendChild(slot);
+                }
+                container.appendChild(rowDiv);
+            }
+
+            document.getElementById('cellModal').style.display = 'flex';
+        }
+
+        async function executeReelMove(fromRow, fromCol, toRow, toCol, itemNum, fromX, fromY, toX, toY) {
+            const reqPayload = {
+                user_id: parseInt(uid),
+                auth_key: auth,
+                item: parseInt(itemNum),
+                from_table_id: currentTable.id,
+                from_row: fromRow,
+                from_col: fromCol,
+                to_table_id: currentTable.id,
+                to_row: toRow,
+                to_col: toCol,
+                to_x: toX,
+                to_y: toY
+            };
+            
+            const res = await fetch(`${url}/api/move`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(reqPayload)
+            });
+            
+            if (res.ok) {
+                await loadTable(currentTable.id);
+                openCellEdit(toRow, toCol);
+            }
+        }
+
+        async function viewReel(itemNumber, monthCode, r, c) {
+            activeReel = { itemNumber, monthCode, r, c };
+            try {
+                const res = await fetch(`${url}/api/search`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_id: parseInt(uid), auth_key: auth, target: "reels", match: "all",
+                        filters: [
+                            { field: "item_number", op: "eq", value: itemNumber },
+                            { field: "month_code", op: "eq", value: monthCode }
+                        ]
+                    })
+                });
+                const data = await res.json();
+                const detailsEl = document.getElementById('reelDetailsText');
+
+                if (data.count > 0) {
+                    const item = data.results[0];
+                    activeReel.reel_id = item.reel_id;
+                    detailsEl.innerHTML = `
+                        <strong>Reel ID:</strong> ${item.reel_id}<br>
+                        <strong>Party:</strong> ${item.party}<br>
+                        <strong>Quality:</strong> ${item.quality}<br>
+                        <strong>Colour:</strong> ${item.colour}<br>
+                        <strong>GSM:</strong> ${item.gsm}<br>
+                        <strong>BF:</strong> ${item.bf}<br>
+                        <strong>Size (cm):</strong> ${item.size_cm}<br>
+                        <strong>Weight (kg):</strong> ${item.weight_kg}<br>
+                        <strong>Date:</strong> ${item.date}<br>
+                        <strong>Time:</strong> ${item.time}<br>
+                    `;
+                } else {
+                    detailsEl.innerText = `Data not found for Item: ${itemNumber}, Month: ${monthCode}`;
+                }
+
+                document.getElementById('reelModal').style.display = 'flex';
+            } catch (e) { alert("Error fetching details"); }
+        }
+
+        async function removeReelFromCell() {
+            if (!activeReel || !currentTable) return;
+            const res = await fetch(`${url}/api/remove`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    user_id: parseInt(uid),
+                    auth_key: auth,
+                    table_id: currentTable.id,
+                    row: activeReel.r,
+                    col: activeReel.c,
+                    item: activeReel.itemNumber
+                })
+            });
+            if (res.ok) {
+                closeModal('reelModal');
+                loadTable(currentTable.id);
+            }
+        }
+
+        function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+        
+        async function dispatchReel() {
+            if (!activeReel || !activeReel.reel_id) {
+                alert("Reel ID not found for dispatch.");
+                return;
+            }
+
+            const now = new Date();
+            const dispatch_date = now.toISOString().split('T')[0];
+            const dispatch_time = now.toTimeString().split(' ')[0];
+
+            try {
+                const res = await fetch(`${url}/api/dispatch/add`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_id: parseInt(uid),
+                        auth_key: auth,
+                        reel_id: activeReel.reel_id,
+                        dispatch_date: dispatch_date,
+                        dispatch_time: dispatch_time
+                    })
+                });
+
+                if (res.ok) {
+                    await removeReelFromCell();
+                    alert("Reel successfully dispatched!");
+                } else {
+                    alert("Failed to dispatch reel.");
+                }
+            } catch (e) {
+                console.error("Dispatch error:", e);
+                alert("Error connecting to dispatch API.");
+            }
+        }
+
+        // Boot script
+        initMap();
+    </script>
+</body>
+</html>

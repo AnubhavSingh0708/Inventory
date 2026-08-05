@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+     <link rel="icon"" href="favicon.png" type="image/png">
+    <title>Advanced Search - Inventory Manager</title>
+    <style>
+        body { font-family: system-ui, sans-serif; background-color: #f4f4f9; margin: 0; padding: 2rem; display: flex; flex-direction: column; align-items: center; }
+        .header { width: 100%; max-width: 900px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+        .container { background: white; padding: 2rem; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 100%; max-width: 900px; margin-bottom: 2rem; }
+        .form-row { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; }
+        .form-group { flex: 1; min-width: 150px; }
+        label { display: block; margin-bottom: 0.3rem; font-weight: bold; font-size: 0.9rem; }
+        select, input { width: 100%; padding: 0.6rem; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+        button { padding: 0.6rem 1.2rem; background: #4A90D9; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        button:hover { background: #357abd; }
+        .btn-danger { background: #E74C3C; }
+        .btn-danger:hover { background: #c0392b; }
+        
+        .filter-list { background: #f8f9fa; padding: 10px; border-radius: 6px; margin-bottom: 15px; border: 1px solid #e9ecef; }
+        .filter-item { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid #ddd; }
+        .filter-item:last-child { border-bottom: none; }
+        
+        .results-container { width: 100%; max-width: 1200px; overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; background: white; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background-color: #4A90D9; color: white; }
+        tr:hover { background-color: #f1f1f1; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h2>Advanced Data Search</h2>
+        <a href="index.html" style="text-decoration:none; color:#4A90D9; font-weight:bold;">Back to Home</a>
+    </div>
+
+    <div class="container">
+        <div class="form-row">
+            <div class="form-group">
+                <label>Target Table</label>
+                <select id="target" onchange="updateFields()"></select>
+            </div>
+            <div class="form-group">
+                <label>Match Type</label>
+                <select id="match">
+                    <option value="all">Match ALL Filters (AND)</option>
+                    <option value="any">Match ANY Filter (OR)</option>
+                </select>
+            </div>
+        </div>
+
+        <hr style="border: 0; border-top: 1px solid #eee; margin: 15px 0;">
+        
+        <h4>Add Filter</h4>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Field</label>
+                <select id="filter_field"></select>
+            </div>
+            <div class="form-group">
+                <label>Operator</label>
+                <select id="filter_op" onchange="toggleValue2()">
+                    <!-- Populated dynamically -->
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Value</label>
+                <input type="text" id="filter_value" placeholder="Value">
+            </div>
+            <div class="form-group" id="value2_group" style="display:none;">
+                <label>Value 2 (for 'between')</label>
+                <input type="text" id="filter_value2" placeholder="Upper bound">
+            </div>
+            <div class="form-group" style="display: flex; align-items: flex-end;">
+                <button onclick="addFilter()">+ Add</button>
+            </div>
+        </div>
+
+        <div class="filter-list" id="active_filters">
+            <em>No active filters. Search will return all records in target.</em>
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label>Sort By Field</label>
+                <select id="sort_field"><option value="">-- None --</option></select>
+            </div>
+            <div class="form-group">
+                <label>Sort Order</label>
+                <select id="sort_order">
+                    <option value="asc">Ascending</option>
+                    <option value="desc">Descending</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Limit</label>
+                <input type="number" id="limit" value="100" max="1000">
+            </div>
+            <div class="form-group" style="display: flex; align-items: flex-end;">
+                <button onclick="executeSearch()" style="width: 100%; background: #2ecc71;">Run Search</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="results-container">
+        <h4 id="result-meta"></h4>
+        <table id="results-table">
+            <thead id="results-head"></thead>
+            <tbody id="results-body"></tbody>
+        </table>
+    </div>
+
+    <script>
+        function getCookie(name) {
+            let match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+            if (match) return decodeURIComponent(match[2]);
+            return null;
+        }
+
+        // Security Check: Redirect if not admin
+        if (getCookie('is_admin') !== 'true') {
+            alert("Unauthorized. Admin access required.");
+            window.location.href = 'index.html';
+        }
+
+        const url = getCookie('server_url');
+        const uid = getCookie('user_id');
+        const auth = getCookie('auth_key');
+        
+        let searchMeta = {};
+        let activeFilters = [];
+
+        async function initMeta() {
+            try {
+                const res = await fetch(`${url}/api/search/meta?user_id=${uid}&auth_key=${auth}`);
+                searchMeta = await res.json();
+                
+                const targetSelect = document.getElementById('target');
+                Object.keys(searchMeta).forEach(target => {
+                    const opt = document.createElement('option');
+                    opt.value = target;
+                    opt.innerText = target.charAt(0).toUpperCase() + target.slice(1);
+                    targetSelect.appendChild(opt);
+                });
+                
+                updateFields();
+            } catch (e) {
+                console.error("Failed to load search meta", e);
+                alert("Failed to connect to server metadata.");
+            }
+        }
+
+        function updateFields() {
+            const target = document.getElementById('target').value;
+            const fields = searchMeta[target].fields;
+            const ops = searchMeta[target].ops;
+
+            const fieldSelect = document.getElementById('filter_field');
+            const sortSelect = document.getElementById('sort_field');
+            const opSelect = document.getElementById('filter_op');
+
+            fieldSelect.innerHTML = '';
+            sortSelect.innerHTML = '<option value="">-- None --</option>';
+            opSelect.innerHTML = '';
+
+            fields.forEach(f => {
+                fieldSelect.innerHTML += `<option value="${f}">${f}</option>`;
+                sortSelect.innerHTML += `<option value="${f}">${f}</option>`;
+            });
+
+            ops.forEach(o => {
+                opSelect.innerHTML += `<option value="${o}">${o}</option>`;
+            });
+
+            // Clear filters when changing target to avoid mismatched fields
+            activeFilters = [];
+            renderFilters();
+        }
+
+        function toggleValue2() {
+            const op = document.getElementById('filter_op').value;
+            document.getElementById('value2_group').style.display = (op === 'between') ? 'block' : 'none';
+        }
+
+        function addFilter() {
+            const field = document.getElementById('filter_field').value;
+            const op = document.getElementById('filter_op').value;
+            let val = document.getElementById('filter_value').value;
+            const val2 = document.getElementById('filter_value2').value;
+
+            if (!val) return alert("Please enter a value");
+
+            // Format numbers and arrays appropriately based on input
+            if (!isNaN(val)) val = Number(val);
+            if (op === 'in') val = val.split(',').map(s => s.trim()); // comma separated for IN
+
+            const filterObj = { field: field, op: op, value: val };
+            if (op === 'between') {
+                if (!val2) return alert("Please enter a second value for 'between'");
+                filterObj.value2 = isNaN(val2) ? val2 : Number(val2);
+            }
+
+            activeFilters.push(filterObj);
+            renderFilters();
+            
+            // Clear inputs
+            document.getElementById('filter_value').value = '';
+            document.getElementById('filter_value2').value = '';
+        }
+
+        function removeFilter(index) {
+            activeFilters.splice(index, 1);
+            renderFilters();
+        }
+
+        function renderFilters() {
+            const container = document.getElementById('active_filters');
+            if (activeFilters.length === 0) {
+                container.innerHTML = "<em>No active filters. Search will return all records in target.</em>";
+                return;
+            }
+
+            container.innerHTML = '';
+            activeFilters.forEach((f, i) => {
+                let text = `<b>${f.field}</b> ${f.op} <i>${JSON.stringify(f.value)}</i>`;
+                if (f.op === 'between') text += ` and <i>${f.value2}</i>`;
+                
+                container.innerHTML += `
+                    <div class="filter-item">
+                        <span>${text}</span>
+                        <button class="btn-danger" onclick="removeFilter(${i})" style="padding: 3px 8px;">X</button>
+                    </div>
+                `;
+            });
+        }
+
+        async function executeSearch() {
+            const target = document.getElementById('target').value;
+            const match = document.getElementById('match').value;
+            const sortField = document.getElementById('sort_field').value;
+            const sortOrder = document.getElementById('sort_order').value;
+            const limit = parseInt(document.getElementById('limit').value) || 100;
+
+            const payload = {
+                user_id: parseInt(uid),
+                auth_key: auth,
+                target: target,
+                match: match,
+                filters: activeFilters,
+                sort_order: sortOrder,
+                limit: limit,
+                offset: 0
+            };
+
+            if (sortField) payload.sort_field = sortField;
+
+            try {
+                const res = await fetch(`${url}/api/search`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                
+                const data = await res.json();
+                
+                if (!res.ok) {
+                    alert("Error: " + (data.error || "Search failed"));
+                    return;
+                }
+
+                renderResults(data);
+            } catch(e) {
+                alert("Search request failed.");
+                console.error(e);
+            }
+        }
+
+        function renderResults(data) {
+            document.getElementById('result-meta').innerText = `Results: ${data.count} of ${data.total} total matching records in '${data.target}'`;
+            
+            const thead = document.getElementById('results-head');
+            const tbody = document.getElementById('results-body');
+            thead.innerHTML = '';
+            tbody.innerHTML = '';
+
+            if (data.results.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="100%" style="text-align:center;">No results found.</td></tr>';
+                return;
+            }
+
+            // Extract headers dynamically from the first result object
+            const headers = Object.keys(data.results[0]);
+            
+            const headerRow = document.createElement('tr');
+            headers.forEach(h => {
+                const th = document.createElement('th');
+                th.innerText = h;
+                headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+
+            // Populate rows
+            data.results.forEach(row => {
+                const tr = document.createElement('tr');
+                headers.forEach(h => {
+                    const td = document.createElement('td');
+                    let cellData = row[h];
+                    
+                    // Stringify nested objects/arrays for neat display (like 'items' in 'cells' target)
+                    if (typeof cellData === 'object' && cellData !== null) {
+                        cellData = JSON.stringify(cellData);
+                    }
+                    
+                    td.innerText = cellData !== undefined && cellData !== null ? cellData : '';
+                    tr.appendChild(td);
+                });
+                tbody.appendChild(tr);
+            });
+        }
+
+        initMeta();
+    </script>
+</body>
+</html>

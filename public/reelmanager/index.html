@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+
+ <link rel="icon"" href="favicon.png" type="image/png">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reel Dashboard</title>
+    <style>
+        body { font-family: system-ui, sans-serif; background-color: #f4f4f9; margin: 0; padding: 0; }
+        .nav { background: #ffffff; color: #0c0c0c; padding: 1rem; display: flex; justify-content: space-between; align-items: center; 
+        box-shadow: 0 6px 7px rgba(0,0,0,0.1); 
+        
+        }
+        .nav-links a { color: #0c0c0c; text-decoration: none; margin-right: 15px; }
+        .logout-btn { background: transparent; border: none; cursor: pointer; display: flex; align-items: center; }
+        .logout-btn img { width: 50px; height: 50px; }
+        
+        .status-container { text-align: center; padding: 2rem; }
+        .status-icon { width: 10vh; height: 10vh; border-radius: 50%; display: inline-block; }
+        .active-icon { background: url(./up.png) ;background-size: contain; box-shadow: 0 0 45px #2ecc71; animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { transform: scale(0.95); } 50% { transform: scale(1.05); } 100% { transform: scale(0.95); } }
+
+        .container { max-width: 1000px; margin: 0 auto; padding: 1rem; }
+        table { width: 100%; border-collapse: collapse; background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.1);border-radius: 18px; }
+        th, td { padding: 1rem; text-align: left; border-bottom: 1px solid #ddd; cursor: pointer; }
+        th{background-color: #2a83ff;  color:#fff; }
+     
+        thead tr:first-child th:first-child {border-top-left-radius: 18px;}
+
+        thead tr:first-child th:last-child {border-top-right-radius: 18px;}
+        tbody tr:last-child th:first-child {border-bottom-left-radius: 18px;}
+
+        tbody tr:last-child th:last-child {border-bottom-right-radius: 18px;}
+
+        tr:hover { background-color: #f1f1f1;color:#0c0c0c }
+        
+        .skeleton td { background: linear-gradient(90deg, #eee 25%, #f4f4f4 50%, #eee 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; color: transparent; }
+        @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+        
+        .load-more { display: block; margin: 1rem auto; padding: 0.75rem 2rem; background: #ddd; border: none; border-radius: 4px; cursor: pointer; }
+        .load-more:hover { background: #ccc; }
+        
+        .fab { position: fixed; bottom: 30px; right: 30px; width: 80px; height: 80px; background: #4A90D9; color: white; border-radius: 50%; font-size: 50px; display: flex; justify-content: center; align-items: center; text-decoration: none; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
+        
+        .context-menu { position: absolute; background: white; border: 1px solid #ccc; box-shadow: 0 2px 5px rgba(0,0,0,0.2); display: none; z-index: 1000; }
+        .context-menu div { padding: 10px 20px; cursor: pointer; }
+        .context-menu div:hover { background: #f0f0f0; }
+
+        .dialog-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: none; justify-content: center; align-items: center; z-index: 2000; }
+        .dialog { background: white; padding: 2rem; border-radius: 8px; min-width: 300px; position: relative; }
+        .close-btn { position: absolute; top: 10px; right: 15px; font-size: 1.5rem; cursor: pointer; }
+        .print-btn { margin-top: 15px; width: 100%; padding: 10px; background: #4A90D9; color: white; border: none; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+<div class="nav">
+    <div style="font-weight: bold; font-size: 1.2rem;">Reel Labeling</div>
+    <div class="nav-links">  <a href="partyedit.html">Manage Parties</a> </div>
+    <div class="nav-links">
+      
+        <button class="logout-btn" onclick="logout()" title="Logout">
+            <img src="logout-icon.png" alt="Logout" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' fill=\'white\' viewBox=\'0 0 24 24\'><path d=\'M16 17v-3H9v-4h7V7l5 5-5 5M14 2a2 2 0 012 2v2h-2V4H5v16h9v-2h2v2a2 2 0 01-2 2H5a2 2 0 01-2-2V4a2 2 0 012-2h9z\'/></svg>'">
+        </button>
+    </div>
+</div>
+
+<div class="status-container">
+    <div id="serverStatus" class="status-icon active-icon">    </div>
+</div>
+
+<div class="container">
+    <table id="reelTable">
+        <thead>
+            <tr>
+                <th>Reel ID</th>
+                <th>Date</th>
+                <th>Weight (kg)</th>
+                <th>Party</th>
+            </tr>
+        </thead>
+        <tbody id="tableBody">
+            <tr class="skeleton"><td>Loading</td><td>Loading</td><td>Loading</td><td>Loading</td></tr>
+            <tr class="skeleton"><td>Loading</td><td>Loading</td><td>Loading</td><td>Loading</td></tr>
+        </tbody>
+    </table>
+    <button class="load-more" onclick="loadMore()">Load More</button>
+</div>
+
+<a href="#" class="fab" onclick="addReel()">+</a>
+
+<!-- Context Menu -->
+<div id="contextMenu" class="context-menu">
+    <div onclick="actionView()">View</div>
+    <div onclick="actionEdit()">Edit</div>
+    <div onclick="actionDelete()" style="color: red;">Delete</div>
+</div>
+
+<!-- View Dialog -->
+<div id="viewDialog" class="dialog-overlay">
+    <div class="dialog">
+        <span class="close-btn" onclick="closeDialog()">&times;</span>
+        <h2>Reel Details</h2>
+        <div id="dialogContent"></div>
+        <button class="print-btn" id="printBtn" onclick="printReel()">Print Label</button>
+    </div>
+</div>
+
+<script>
+    const getCookie = (name) => {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) return decodeURIComponent(parts.pop().split(';').shift());
+        return null;
+    };
+
+    const serverUrl = getCookie('server_url');
+    const userId = getCookie('user_id');
+    const key = getCookie('auth_key');
+    const username = getCookie('username');
+
+    if (!serverUrl || !userId) {
+        window.location.href = 'login.html';
+    }
+
+    let currentStart = 0;
+    let selectedReel = null;
+    const limit = 20;
+
+async function checkServer() {
+    try {
+        const url = `${serverUrl}/api/validatelogin?user_id=${parseInt(userId)}&auth_key=${encodeURIComponent(key)}`;
+        
+        const res = await fetch(url, {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' }
+        });
+        
+        const data = await res.json();
+        
+        if (data.valid !== true) {
+            logout();
+        }
+    } catch (err) {
+        console.error("Server check failed:", err); // Keep this to catch network/CORS errors
+        document.getElementById('serverStatus').className = 'status-icon';
+        document.getElementById('serverStatus').style.backgroundImage = "url('./down.png')";
+        document.getElementById('serverStatus').style.boxShadow = "0 0 45px #ff0000";
+        document.getElementById('serverStatus').style.backgroundSize = "contain";
+    }
+}
+
+    async function loadReels(start, end) {
+        try {
+            const res = await fetch(`${serverUrl}/api/reels?user_id=${userId}&auth_key=${encodeURIComponent(key)}&start=${start}&end=${end}`);
+            const reels = await res.json();
+            return reels;
+        } catch (e) {
+            return [];
+        }
+    }
+
+    async function renderTable() {
+        if (currentStart === 0) document.getElementById('tableBody').innerHTML = '';
+        const reels = await loadReels(currentStart, currentStart + limit - 1);
+        
+        const tbody = document.getElementById('tableBody');
+        if (reels.length === 0 && currentStart === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;">No records found.</td></tr>';
+            return;
+        }
+
+        reels.forEach(reel => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>${reel.reel_id}</td>
+                <td>${reel.date}</td>
+                <td>${reel.weight_kg}</td>
+                <td>${reel.party}</td>
+            `;
+            tr.oncontextmenu = (e) => showContextMenu(e, reel);
+            tr.onclick = (e) => showContextMenu(e, reel);
+            tbody.appendChild(tr);
+        });
+    }
+
+    function loadMore() {
+        currentStart += limit;
+        renderTable();
+    }
+
+    function showContextMenu(e, reel) {
+        e.preventDefault();
+        selectedReel = reel;
+        const menu = document.getElementById('contextMenu');
+        menu.style.display = 'block';
+        menu.style.left = e.pageX + 'px';
+        menu.style.top = e.pageY + 'px';
+    }
+
+    document.addEventListener('click', () => {
+        document.getElementById('contextMenu').style.display = 'none';
+    });
+
+    function actionView() {
+        document.getElementById('viewDialog').style.display = 'flex';
+        const c = document.getElementById('dialogContent');
+        c.innerHTML = `
+            <p><strong>ID:</strong> ${selectedReel.reel_id}</p>
+            <p><strong>Month Code:</strong> ${selectedReel.month_code}</p>
+            <p><strong>Item Number:</strong> ${selectedReel.item_number}</p>
+            <p><strong>Weight:</strong> ${selectedReel.weight_kg} kg</p>
+            <p><strong>Size:</strong> ${selectedReel.size_cm} cm</p>
+            <p><strong>GSM:</strong> ${selectedReel.gsm}</p>
+            <p><strong>Colour:</strong> ${selectedReel.colour}</p>
+            <p><strong>Quality:</strong> ${selectedReel.quality}</p>
+            <p><strong>Party:</strong> ${selectedReel.party}</p>
+        `;
+    }
+
+    function closeDialog() {
+        document.getElementById('viewDialog').style.display = 'none';
+    }
+
+    function actionEdit() {
+        document.cookie = `editing=${selectedReel.id}; path=/`;
+        window.location.href = 'edit.html';
+    }
+
+    function addReel() {
+        document.cookie = `editing=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/`;
+        window.location.href = 'edit.html';
+    }
+
+    async function actionDelete() {
+        if(!confirm(`Delete Reel ${selectedReel.reel_id}?`)) return;
+        await fetch(`${serverUrl}/api/reel/remove`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ user_id: parseInt(userId), auth_key: key, id: selectedReel.id })
+        });
+        currentStart = 0;
+        renderTable();
+    }
+
+    async function printReel() {
+        const btn = document.getElementById('printBtn');
+        btn.innerText = "Loading QR...";
+        btn.disabled = true;
+
+        const qrText = `${serverUrl}/lookupqr?id=${encodeURIComponent(selectedReel.reel_id)}`;
+        const qrUrl = `${serverUrl}/api/qrcode?user_id=${userId}&auth_key=${encodeURIComponent(key)}&text=${encodeURIComponent(qrText)}&size=512`;
+        
+        try {
+            const response = await fetch(qrUrl);
+            const blob = await response.blob();
+            const imgUrl = URL.createObjectURL(blob);
+
+            const printWin = window.open('', '_blank');
+            printWin.document.write(`
+                <html>
+                <head><title>Print Label</title></head>
+                <body style="font-family: sans-serif; text-align: center; padding: 20px;">
+                    <img src="${imgUrl}" style="width: 300px; height: 300px; margin-bottom: 20px;" />
+                    <h1 style="margin: 5px 0;">${selectedReel.reel_id}</h1>
+                    <h3 style="margin: 5px 0; color: #555;">Party: ${selectedReel.party}</h3>
+                    <p style="font-size: 1.2rem;">Weight: <strong>${selectedReel.weight_kg} kg</strong> | GSM: <strong>${selectedReel.gsm}</strong></p>
+                    <p style="font-size: 1.2rem;"> Colour: <strong>${selectedReel.colour} </strong> | Size: <strong>${selectedReel.size_cm} cm</strong> </p>
+                    <p style="font-size: 1.2rem;">Quality: <strong>${selectedReel.quality} </strong> | BF: <strong>${selectedReel.bf}</strong></p>
+                    <p>Date: ${selectedReel.date} ${selectedReel.time}</p>
+                    <script>
+                        window.onload = function() { window.print(); window.close(); }
+                    <\/script>
+                </body>
+                </html>
+            `);
+            printWin.document.close();
+        } catch (e) {
+            alert("Failed to generate QR Code");
+        }
+
+        btn.innerText = "Print Label";
+        btn.disabled = false;
+    }
+
+    function logout() {
+        document.cookie = `server_url=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/`;
+        document.cookie = `username=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/`;
+        document.cookie = `user_id=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/`;
+        document.cookie = `auth_key=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/`;
+        window.location.href = 'login.html';
+    }
+
+    checkServer();
+    renderTable();
+</script>
+</body>
+</html>

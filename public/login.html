@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Inventory Manager</title>
+
+ <link rel="icon"" href="favicon.png" type="image/png">
+    <style>
+        body { font-family: system-ui, sans-serif; background-color: #f4f4f9; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .login-box { background: white; padding: 1.8rem; border-radius: 40px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }
+        .login-box h2 { margin-top: 0; text-align: center;line-height: 1.7;font-size: 3.5vh; }
+        .form-group { margin-bottom: 1rem; }
+        label { display: block; margin-bottom: 0.3rem; font-weight: bold; }
+        input { width: 100%; padding: 0.75rem; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
+        button { width: 100%; padding: 0.75rem; background: #4A90D9; color: white; border: none; border-radius: 1.25rem; font-size: 1rem; cursor: pointer; }
+        button:hover { background: #357abd; }
+        .error { color: #E74C3C; text-align: center; margin-top: 1rem; display: none; }
+    </style>
+</head>
+<body>
+
+<div class="login-box">
+    <h2>Login</h2>
+    <div class="form-group">
+        <label>Server URL</label>
+        <input type="text" id="serverUrl" placeholder="https://192.168.1.50:8443" value="http://localhost:8443">
+    </div>
+    <div class="form-group">
+        <label>Username</label>
+        <input type="text" id="username">
+    </div>
+    <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="password">
+    </div><br>
+    <button onclick="attemptLogin()">Connect</button>
+    <div class="error" id="errorMsg">Invalid credentials or server offline.</div>
+</div>
+
+<script>
+    async function attemptLogin() {
+        const serverUrl = document.getElementById('serverUrl').value.replace(/\/$/, "");
+        const username = document.getElementById('username').value;
+        const password = document.getElementById('password').value;
+        const errorMsg = document.getElementById('errorMsg');
+
+        try {
+            const response = await fetch(`${serverUrl}/api/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+            
+            const data = await response.json();
+            
+            if (data.user_id !== -1) {
+// Expiration set to 30 days in seconds (30 days * 24h * 60m * 60s)
+const maxAge = 30 * 24 * 60 * 60;
+
+// Security options
+const cookieOptions = `; path=/; max-age=${maxAge}; SameSite=Lax;Secure `;
+
+// Set persistent & secure cookies
+document.cookie = `server_url=${encodeURIComponent(serverUrl)}${cookieOptions}`;
+document.cookie = `username=${encodeURIComponent(username)}${cookieOptions}`;
+document.cookie = `user_id=${data.user_id}${cookieOptions}`;
+document.cookie = `auth_key=${data.auth_key}${cookieOptions}`;
+document.cookie = `is_admin=${data.is_admin}${cookieOptions}`;
+                window.location.href = 'index.html';
+            } else {
+                errorMsg.style.display = 'block';
+                errorMsg.innerText = "Invalid username or password.";
+            }
+        } catch (err) {
+            errorMsg.style.display = 'block';
+            errorMsg.innerText = "Server not reachable.";
+        }
+    }
+</script>
+</body>
+</html>

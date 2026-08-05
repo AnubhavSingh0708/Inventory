@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+     <link rel="icon"" href="favicon.png" type="image/png">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Inventory Manager</title>
+    <style>
+        body { font-family: system-ui, sans-serif; background-color: #f4f4f9; margin: 0; padding: 2rem; display: flex; flex-direction: column; align-items: center; }
+        h1 { margin-bottom: 2rem; color: #333; }
+        .grid { display: flex; flex-wrap: wrap; gap: 1.5rem; justify-content: center; max-width: 900px; width: 100%; }
+        .tile { 
+            display: flex; 
+            flex-direction: column;
+            justify-content: center; align-items: center; text-align: center;
+            width: 20vh; height: 20vh; min-width: 120px; min-height: 120px;
+             background-image:linear-gradient( 135deg,#fff,#357abd 90%); 
+             color:#111;
+             text-decoration: none; font-weight: bold; font-size: 1.2rem;
+            border-radius: 20px; 
+            box-shadow: 0px 0px 22px #357abd inset,
+            0 4px 12px rgba(0,0,0,0.3); 
+            transition: transform 0.2s; cursor: pointer;
+            
+        }
+        .tile:hover { transform: scale(1.05); 
+            background-image:linear-gradient( 135deg,#fff ,#357abd 70%);
+         }
+        .admin-tile { background-image: linear-gradient(135deg, #fff , #ff4516 90%); display: none; 
+                        box-shadow: 0px 0px 22px #ff2511 inset,
+            0 4px 12px rgba(0,0,0,0.3); 
+                         
+        }
+        .icon{ width: 50%; height: auto; margin-bottom: 0.5rem;}
+        .admin-tile:hover {background-image: linear-gradient(135deg, #fff , #ff0000 70%); }
+    </style>
+</head>
+<body>
+
+    <h1>Inventory Dashboard</h1>
+    <div class="grid" id="main-grid">
+        <!-- Standard Options -->
+        <a href="map.html" class="tile">
+            
+            <img src="./assets/map.png" alt="Map Icon" style=" width: 50%; height: auto; margin-bottom: 0.5rem;">
+            Map</a>
+        <a href="search.html" class="tile">
+            <img src="./assets/search.png" alt="Search Icon" class="icon">
+            Search</a>
+        <a href="qr.html" class="tile">
+            <img src="./assets/qr.png" alt="QR Code Icon" class="icon">
+            QR Code</a>
+        <a href="dispatch.html" class="tile">
+            <img src="./assets/list.png" alt="List View Icon" class="icon">
+            Dispatched</a>
+        <a href="billing_archive.html" class="tile">
+            <img src="./assets/table.png" alt="Archive Icon" class="icon">
+            Billed Reels</a>
+ 
+        <!-- Admin Options -->
+       
+        <a href="adv_search.html" class="tile admin-tile">
+            <img src="./assets/search.png" alt="Advanced Search Icon" class="icon">
+            Advanced Search</a>
+        <a href="parties.html" class="tile admin-tile">
+            <img src="./assets/edit.png" alt="Edit Parties Icon" class="icon">
+            Edit Parties</a>
+        <a href="monthcodes.html" class="tile admin-tile">
+            <img src="./assets/edit.png" alt="Edit Monthcodes Icon" class="icon">
+            Edit Monthcodes</a>
+    </div>
+   <img src="./reelmanager/logout-icon.png" alt="Logout Icon" class="icon" style=" position:fixed; top: 2rem; right: 2rem; width: 3rem; height: 3rem; cursor: pointer;" onclick="logout()">
+    <script>
+        // Cookie parser helper
+        function getCookie(name) {
+            let match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+            if (match) return decodeURIComponent(match[2]);
+            return null;
+        }
+
+        const is_admin = getCookie('is_admin') === 'true';
+        
+        // Show admin tiles if user has permissions
+        if (is_admin) {
+            document.querySelectorAll('.admin-tile').forEach(el => el.style.display = 'flex');
+        }
+
+        // Redirect to login if unauthenticated
+        if (!getCookie('auth_key')) window.location.href = 'login.html';
+
+        function logout() {
+              document.cookie = `server_url=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/`;
+        document.cookie = `username=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/`;
+        document.cookie = `user_id=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/`;
+        document.cookie = `auth_key=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/`;
+        document.cookie = `is_admin=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/`;
+        window.location.href = 'login.html';}
+    </script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" width="100%" height="100%">
+  <!-- Background layout outline (optional grid/border) -->
+  <rect x="0" y="0" width="800" height="600" fill="#f8f9fa" stroke="#cccccc" stroke-width="2"/>
+
+  <!-- Reference Points for Frontend Alignment -->
+  <circle id="refpoint1" cx="50" cy="50" r="4" fill="#ff0000"/>
+  <circle id="refpoint2" cx="750" cy="550" r="4" fill="#ff0000"/>
+
+  <!-- Zone / Table Polygons -->
+  <!-- Zone 1 -->
+  <rect id="zone1" x="100" y="100" width="250" height="180" fill="#4a90e2" rx="8"/>
+
+  <!-- Zone 2 -->
+  <rect id="zone2" x="450" y="100" width="250" height="180" fill="#50e3c2" rx="8"/>
+
+  <!-- Zone 3 -->
+  <rect id="zone3" x="100" y="340" width="250" height="180" fill="#f5a623" rx="8"/>
+
+  <!-- Zone 4 -->
+  <rect id="zone4" x="450" y="340" width="250" height="180" fill="#b8e986" rx="8"/>
+</svg>

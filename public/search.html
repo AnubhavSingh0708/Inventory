@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+     <link rel="icon"" href="favicon.png" type="image/png">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Search Reel - Inventory Manager</title>
+    <style>
+        body { font-family: system-ui, sans-serif; background-color: #f4f4f9; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .search-box { background: white; padding: 2rem; border-radius: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }
+        h2 { text-align: center; margin-top: 0; }
+        .form-group { margin-bottom: 1rem; }
+        label { display: block; margin-bottom: 0.3rem; font-weight: bold; }
+        input { width: 100%; padding: 0.75rem; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
+        button { width: 100%; padding: 0.75rem; background: #4A90D9; color: white; border: none; border-radius: 1.25rem; font-size: 1rem; cursor: pointer; margin-top: 10px; }
+        button:hover { background: #357abd; }
+        .back-btn { background: #95a5a6; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="search-box">
+    <h2>Locate Reel</h2>
+    <div class="form-group">
+        <label>Month Code (e.g., 2026-07)</label>
+        <input type="text" id="month_code" required>
+    </div>
+    <div class="form-group">
+        <label>Item Number</label>
+        <input type="number" id="item_number" required>
+    </div>
+    <button onclick="triggerSearch()">Locate on Map</button>
+    <button class="back-btn" onclick="window.location.href='index.html'">Back to Home</button>
+</div>
+
+<script>
+    function triggerSearch() {
+        const monthCode = document.getElementById('month_code').value;
+        const itemNumber = document.getElementById('item_number').value;
+        if (!monthCode || !itemNumber) return alert("Fill in both fields.");
+        
+        // Store targets in short-lived cookies for the map page
+        document.cookie = `search_month=${encodeURIComponent(monthCode)}; path=/; max-age=60`;
+        document.cookie = `search_item=${encodeURIComponent(itemNumber)}; path=/; max-age=60`;
+        
+        window.location.href = 'map.html';
+    }
+</script>
+</body>
+</html>

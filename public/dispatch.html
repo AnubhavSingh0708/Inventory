@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dispatched Reels (Pending Billing)</title>
+    <style>
+        body { font-family: system-ui, sans-serif; background: #f4f6f8; margin: 0; padding: 2rem; color: #1a252f; }
+        .container { max-width: 1000px; margin: 0 auto; background: #fff; padding: 1.5rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { margin-top: 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.5rem; }
+        table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e2e8f0; }
+        th { background-color: #f8fafc; font-weight: bold; color: #64748b; text-transform: uppercase; font-size: 0.85rem; }
+        tr:hover { background-color: #f1f5f9; }
+        .clickable-row { cursor: pointer; }
+        
+        .btn { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; font-weight: bold; color: white; margin-right: 5px; }
+        .btn-green { background-color: #22c55e; }
+        .btn-green:hover { background-color: #16a34a; }
+        .btn-red { background-color: #ef4444; }
+        .btn-red:hover { background-color: #dc2626; }
+        .btn-blue { background-color: #3b82f6; }
+        .btn-blue:hover { background-color: #2563eb; }
+
+        /* Modal Styles */
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 1000; }
+        .modal { background: #fff; padding: 2rem; border-radius: 8px; width: 90%; max-width: 500px; box-shadow: 0 10px 15px rgba(0,0,0,0.2); }
+        .modal h2 { margin-top: 0; }
+        .modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem; }
+        .label { font-weight: bold; color: #64748b; font-size: 0.85rem; text-transform: uppercase; }
+        .value { font-size: 1.1rem; color: #0f172a; }
+        .close-btn { margin-top: 1.5rem; width: 100%; padding: 10px; background: #e2e8f0; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .close-btn:hover { background: #cbd5e1; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Dispatched Reels (Pending Billing)</h1>
+    <table>
+        <thead>
+            <tr>
+                <th>Reel ID</th>
+                <th>Size (CM)</th>
+                <th>Weight (KG)</th>
+                <th>Dispatch Time</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="table-body">
+            <tr><td colspan="5">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- Details Modal -->
+<div class="modal-overlay" id="details-modal" onclick="closeModal(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+        <h2 id="modal-title">Reel Details</h2>
+        <div class="modal-grid" id="modal-content">
+            <!-- Populated via JS -->
+        </div>
+        <button class="close-btn" onclick="document.getElementById('details-modal').style.display='none'">Close</button>
+    </div>
+</div>
+
+<script>
+// Utility to get cookies (now with decoding)
+    function getCookie(name) {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) {
+            let val = parts.pop().split(';').shift();
+            // Decode URL encoding (%3A%2F%2F -> ://)
+            val = decodeURIComponent(val);
+            // Remove extra quotes if present
+            val = val.replace(/^"|"$/g, '');
+            return val;
+        }
+        return null;
+    }
+
+    const authKey = getCookie('auth_key');
+    const userId = parseInt(getCookie('user_id'), 10);
+    
+    // Get serverUrl, defaulting to current origin if missing
+    let serverUrl = getCookie('server_url') ;
+    
+    // Remove trailing slash if present
+    if (serverUrl.endsWith('/')) {
+        serverUrl = serverUrl.slice(0, -1);
+    }
+
+    let reelsData = [];
+
+    async function loadData() {
+        if (!authKey || isNaN(userId)) {
+            alert("Authentication credentials missing. Please log in.");
+            return;
+        }
+
+        try {
+            const res = await fetch(`${serverUrl}/api/billing?user_id=${userId}&auth_key=${authKey}`);
+            
+            // IF THE SERVER RETURNS AN ERROR, EXTRACT THE EXACT MESSAGE:
+            if (!res.ok) {
+                let errMsg = `HTTP Error ${res.status}`;
+                try {
+                    const errData = await res.json();
+                    if (errData.error) errMsg = errData.error;
+                } catch(e) {} // Fallback if not JSON
+                throw new Error(errMsg);
+            }
+            
+            reelsData = await res.json();
+            renderTable();
+        } catch (err) {
+            console.error(err);
+            // NOW YOU WILL SEE THE EXACT DATABASE ERROR IN RED TEXT:
+            document.getElementById('table-body').innerHTML = `<tr><td colspan="5" style="color:red; font-weight:bold;">Error: ${err.message}</td></tr>`;
+        }
+    }
+
+    function renderTable() {
+        const tbody = document.getElementById('table-body');
+        tbody.innerHTML = '';
+
+        if (!reelsData || reelsData.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5">No dispatched reels found.</td></tr>';
+            return;
+        }
+
+        reelsData.forEach(reel => {
+            const tr = document.createElement('tr');
+            
+            // Left click anywhere on the row (except buttons) shows details
+            tr.className = 'clickable-row';
+            tr.onclick = (e) => {
+                if (e.target.tagName !== 'BUTTON') showDetails(reel);
+            };
+
+            tr.innerHTML = `
+                <td><strong>${reel.reel_id}</strong></td>
+                <td>${reel.size_cm.toFixed(2)}</td>
+                <td>${reel.weight_kg.toFixed(2)}</td>
+                <td>${reel.dispatch_date} ${reel.dispatch_time}</td>
+                <td>
+                    <button class="btn btn-blue" onclick="showDetailsBtn(event, '${reel.reel_id}')">Details</button>
+                    <button class="btn btn-green" onclick="markBilled(event, '${reel.reel_id}')">Billed</button>
+                    <button class="btn btn-red" onclick="undispatch(event, '${reel.reel_id}')">Undispatch</button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    function showDetailsBtn(e, reelId) {
+        e.stopPropagation();
+        const reel = reelsData.find(r => r.reel_id === reelId);
+        if(reel) showDetails(reel);
+    }
+
+    function showDetails(reel) {
+        document.getElementById('modal-title').innerText = `Reel #${reel.reel_id}`;
+        document.getElementById('modal-content').innerHTML = `
+            <div><div class="label">Size (CM)</div><div class="value">${reel.size_cm}</div></div>
+            <div><div class="label">GSM</div><div class="value">${reel.gsm}</div></div>
+            <div><div class="label">BF</div><div class="value">${reel.bf}</div></div>
+            <div><div class="label">Colour</div><div class="value">${reel.colour}</div></div>
+            <div><div class="label">Weight (KG)</div><div class="value">${reel.weight_kg}</div></div>
+            <div><div class="label">Quality</div><div class="value">${reel.quality}</div></div>
+            <div><div class="label">Party</div><div class="value">${reel.party || 'N/A'}</div></div>
+            <div><div class="label">Mfg Date</div><div class="value">${reel.date} ${reel.time}</div></div>
+            <div style="grid-column: span 2; margin-top: 10px; border-top: 1px solid #e2e8f0; padding-top: 10px;">
+                <div class="label">Dispatch Info</div>
+                <div class="value">${reel.dispatch_date} at ${reel.dispatch_time}</div>
+            </div>
+        `;
+        document.getElementById('details-modal').style.display = 'flex';
+    }
+
+    function closeModal(e) {
+        if (e.target.id === 'details-modal') {
+            document.getElementById('details-modal').style.display = 'none';
+        }
+    }
+
+    async function markBilled(e, reelId) {
+        e.stopPropagation();
+        if (!confirm(`Are you sure you want to mark Reel ${reelId} as BILLED? This will move it to the archive.`)) return;
+
+        const now = new Date();
+        const dateStr = now.toISOString().split('T')[0];
+        const timeStr = now.toTimeString().split(' ')[0];
+
+        try {
+            const res = await fetch(`${serverUrl}/api/billing/archive`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    user_id: userId,
+                    auth_key: authKey,
+                    reel_id: reelId,
+                    billed_date: dateStr,
+                    billed_time: timeStr
+                })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Failed to bill reel");
+            
+            // Reload table
+            loadData();
+        } catch (err) {
+            alert(err.message);
+        }
+    }
+
+    async function undispatch(e, reelId) {
+        e.stopPropagation();
+        if (!confirm(`Are you sure you want to UNDISPATCH Reel ${reelId}? It will be returned to the active inventory.`)) return;
+
+        try {
+            const res = await fetch(`${serverUrl}/api/dispatch/undo`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    user_id: userId,
+                    auth_key: authKey,
+                    reel_id: reelId
+                })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Failed to undispatch reel");
+            
+            // Reload table
+            loadData();
+        } catch (err) {
+            alert(err.message);
+        }
+    }
+
+    // Init
+    loadData();
+</script>
+
+</body>
+</html>
