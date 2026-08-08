@@ -130,11 +130,15 @@
 
 async function checkServer() {
     try {
-        const url = `${serverUrl}/api/validatelogin?user_id=${parseInt(userId)}&auth_key=${encodeURIComponent(key)}`;
+        const url = `${serverUrl}/api/validatelogin`;
         
         const res = await fetch(url, {
             method: 'GET',
-            headers: { 'Accept': 'application/json' }
+            headers: {
+                'X-User-ID': userId,
+                'X-Auth-Key': key,
+                'Accept': 'application/json'
+            }
         });
         
         const data = await res.json();
@@ -153,7 +157,12 @@ async function checkServer() {
 
     async function loadReels(start, end) {
         try {
-            const res = await fetch(`${serverUrl}/api/reels?user_id=${userId}&auth_key=${encodeURIComponent(key)}&start=${start}&end=${end}`);
+            const res = await fetch(`${serverUrl}/api/reels?start=${start}&end=${end}`, {
+                headers: {
+                    'X-User-ID': userId,
+                    'X-Auth-Key': key
+                }
+            });
             const reels = await res.json();
             return reels;
         } catch (e) {
@@ -237,8 +246,12 @@ async function checkServer() {
         if(!confirm(`Delete Reel ${selectedReel.reel_id}?`)) return;
         await fetch(`${serverUrl}/api/reel/remove`, {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ user_id: parseInt(userId), auth_key: key, id: selectedReel.id })
+            headers: {
+                'X-User-ID': userId,
+                'X-Auth-Key': key,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({  id: selectedReel.id })
         });
         currentStart = 0;
         renderTable();
@@ -250,10 +263,12 @@ async function checkServer() {
         btn.disabled = true;
 
         const qrText = `${serverUrl}/lookupqr?id=${encodeURIComponent(selectedReel.reel_id)}`;
-        const qrUrl = `${serverUrl}/api/qrcode?user_id=${userId}&auth_key=${encodeURIComponent(key)}&text=${encodeURIComponent(qrText)}&size=512`;
+        const qrUrl = `${serverUrl}/api/qrcode?text=${encodeURIComponent(qrText)}&size=512`;
         
         try {
-            const response = await fetch(qrUrl);
+            const response = await fetch(qrUrl, {
+                headers: { 'X-User-ID': userId, 'X-Auth-Key': key }
+            });
             const blob = await response.blob();
             const imgUrl = URL.createObjectURL(blob);
 

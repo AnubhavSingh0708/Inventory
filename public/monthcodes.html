@@ -56,7 +56,12 @@
     async function loadParties() {
         const list = document.getElementById('partyList');
         try {
-            const res = await fetch(`${serverUrl}/api/monthcodes?user_id=${userId}&auth_key=${encodeURIComponent(key)}`);
+            const res = await fetch(`${serverUrl}/api/monthcodes`, {
+                headers: {
+                    'X-User-ID': userId,
+                    'X-Auth-Key': key
+                }
+            });
             const parties = await res.json();
             
             list.innerHTML = '';
@@ -79,8 +84,12 @@
 
         await fetch(`${serverUrl}/api/monthcode/add`, {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ user_id: parseInt(userId), auth_key: key,  code: nameInput.value })
+            headers: {
+                'X-User-ID': userId,
+                'X-Auth-Key': key,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({  code: nameInput.value })
         });
         
         nameInput.value = '';
@@ -92,8 +101,8 @@
         
         await fetch(`${serverUrl}/api/monthcode/remove`, {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ user_id: parseInt(userId), auth_key: key, id: id })
+            headers: {'Content-Type': 'application/json', 'X-User-ID': userId, 'X-Auth-Key': key},
+            body: JSON.stringify({  id: id })
         });
         
         loadParties();

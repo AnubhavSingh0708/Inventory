@@ -178,8 +178,13 @@
             try {
                 // Fetch Map SVG and Tables list in parallel
                 const [mapRes, tablesRes] = await Promise.all([
-                    fetch(`${url}/api/map?user_id=${uid}&auth_key=${auth}`),
-                    fetch(`${url}/api/tables?user_id=${uid}&auth_key=${auth}`)
+                    fetch(`${url}/api/map`,{headers: {'X-User-ID': uid,'X-Auth-Key': auth}}),
+                    fetch(`${url}/api/tables`, {
+                        headers: {
+                            'X-User-ID': uid,
+                            'X-Auth-Key': auth
+                        }
+                    })
                 ]);
 
                 if (mapRes.ok && tablesRes.ok) {
@@ -218,7 +223,12 @@
             const targetNumber = parseInt(searchItem);
 
             try {
-                const tablesRes = await fetch(`${url}/api/tables?user_id=${uid}&auth_key=${auth}`);
+                const tablesRes = await fetch(`${url}/api/tables`, {
+                    headers: {
+                        'X-User-ID': uid,
+                        'X-Auth-Key': auth
+                    }
+                });
                 const tablesData = await tablesRes.json();
                 const tables = Array.isArray(tablesData) ? tablesData : (tablesData.results || []);
 
@@ -230,7 +240,12 @@
                 let foundTableId = null;
 
                 for (const table of tables) {
-                    const cellsRes = await fetch(`${url}/api/table?user_id=${uid}&auth_key=${auth}&table_id=${table.id}`);
+                    const cellsRes = await fetch(`${url}/api/table?table_id=${table.id}`, {
+                        headers: {
+                            'X-User-ID': uid,
+                            'X-Auth-Key': auth
+                        }
+                    });
                     const cellsData = await cellsRes.json();
                     const cells = Array.isArray(cellsData) ? cellsData : (cellsData.results || []);
 
@@ -296,7 +311,12 @@
             currentTable = tablesList.find(t => t.id === tableId) || { id: tableId, stack_type: 'horizontal' };
 
             try {
-                const szRes = await fetch(`${url}/api/cellsize?user_id=${uid}&auth_key=${auth}&table_id=${tableId}`);
+                const szRes = await fetch(`${url}/api/cellsize?table_id=${tableId}`, {
+                    headers: {
+                        'X-User-ID': uid,
+                        'X-Auth-Key': auth
+                    }
+                });
                 if (szRes.ok) {
                     const sz = await szRes.json();
                     maxRows = sz.rows || maxRows;
@@ -308,7 +328,12 @@
             }
 
             try {
-                const res = await fetch(`${url}/api/table?user_id=${uid}&auth_key=${auth}&table_id=${tableId}`);
+                const res = await fetch(`${url}/api/table?table_id=${tableId}`, {
+                    headers: {
+                        'X-User-ID': uid,
+                        'X-Auth-Key': auth
+                    }
+                });
                 const cells = await res.json();
                 currentTableData = cells;
 
@@ -432,7 +457,12 @@
             select.innerHTML = '<option value="">Loading unassigned reels...</option>';
 
             try {
-                const res = await fetch(`${url}/api/reels/unassigned?user_id=${uid}&auth_key=${auth}`);
+                const res = await fetch(`${url}/api/reels/unassigned`, {
+                    headers: {
+                        'X-User-ID': uid,
+                        'X-Auth-Key': auth
+                    }
+                });
                 
                 if (!res.ok) {
                     throw new Error(`Server status ${res.status}`);
@@ -465,8 +495,6 @@
             const data = JSON.parse(val);
             
             const reqPayload = {
-                user_id: parseInt(uid),
-                auth_key: auth,
                 table_id: currentTable.id,
                 item: parseInt(data.number),
                 month_code: data.month_code,
@@ -478,7 +506,8 @@
             
             const res = await fetch(`${url}/api/add`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json' ,'X-User-ID': uid,'X-Auth-Key': auth
+                },
                 body: JSON.stringify(reqPayload)
             });
             
@@ -559,8 +588,6 @@
 
         async function executeReelMove(fromRow, fromCol, toRow, toCol, itemNum, fromX, fromY, toX, toY) {
             const reqPayload = {
-                user_id: parseInt(uid),
-                auth_key: auth,
                 item: parseInt(itemNum),
                 from_table_id: currentTable.id,
                 from_row: fromRow,
@@ -574,7 +601,7 @@
             
             const res = await fetch(`${url}/api/move`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-User-ID': uid, 'X-Auth-Key': auth },
                 body: JSON.stringify(reqPayload)
             });
             
@@ -589,9 +616,10 @@
             try {
                 const res = await fetch(`${url}/api/search`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json' ,'X-User-ID': uid,'X-Auth-Key': auth
+                    },
                     body: JSON.stringify({
-                        user_id: parseInt(uid), auth_key: auth, target: "reels", match: "all",
+                         target: "reels", match: "all",
                         filters: [
                             { field: "item_number", op: "eq", value: itemNumber },
                             { field: "month_code", op: "eq", value: monthCode }
@@ -628,10 +656,9 @@
             if (!activeReel || !currentTable) return;
             const res = await fetch(`${url}/api/remove`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json' ,'X-User-ID': uid,'X-Auth-Key': auth
+                        },
                 body: JSON.stringify({
-                    user_id: parseInt(uid),
-                    auth_key: auth,
                     table_id: currentTable.id,
                     row: activeReel.r,
                     col: activeReel.c,
@@ -659,10 +686,9 @@
             try {
                 const res = await fetch(`${url}/api/dispatch/add`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json' ,'X-User-ID': uid,'X-Auth-Key': auth
+                    },
                     body: JSON.stringify({
-                        user_id: parseInt(uid),
-                        auth_key: auth,
                         reel_id: activeReel.reel_id,
                         dispatch_date: dispatch_date,
                         dispatch_time: dispatch_time

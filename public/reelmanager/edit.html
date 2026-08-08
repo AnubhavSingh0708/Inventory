@@ -147,7 +147,12 @@
     }
 
     async function loadMonthCodes() {
-        const res = await fetch(`${serverUrl}/api/monthcodes?user_id=${userId}&auth_key=${encodeURIComponent(key)}`);
+        const res = await fetch(`${serverUrl}/api/monthcodes`, {
+            headers: {
+                'X-User-ID': userId,
+                'X-Auth-Key': key
+            }
+        });
         const codes = await res.json();
         const select = document.getElementById('month_code');
         select.innerHTML = '<option value="">Select Month Code</option>';
@@ -157,7 +162,12 @@
     }
 
     async function loadParties() {
-        const res = await fetch(`${serverUrl}/api/parties?user_id=${userId}&auth_key=${encodeURIComponent(key)}`);
+        const res = await fetch(`${serverUrl}/api/parties`, {
+            headers: {
+                'X-User-ID': userId,
+                'X-Auth-Key': key
+            }
+        });
         const parties = await res.json();
         const select = document.getElementById('party');
         select.innerHTML = '<option value="">Select Party</option>';
@@ -173,9 +183,8 @@ sugge("quality",false,["Craftboard","Liner Paper","Fluting paper","Fluting/Liner
     async function loadReelToEdit(id) {
         const res = await fetch(`${serverUrl}/api/search`, {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: {'Content-Type': 'application/json', 'X-User-ID': userId, 'X-Auth-Key': key},
             body: JSON.stringify({
-                user_id: parseInt(userId), auth_key: key,
                 target: "reels", match: "all",
                 filters: [{ field: "id", op: "eq", value: parseInt(id) }]
             })
@@ -213,8 +222,8 @@ sugge("quality",false,["Craftboard","Liner Paper","Fluting paper","Fluting/Liner
         if (!name) return;
         await fetch(`${serverUrl}/api/party/add`, {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ user_id: parseInt(userId), auth_key: key, party: { name: name } })
+            headers: {'Content-Type': 'application/json', 'X-User-ID': userId, 'X-Auth-Key': key},
+            body: JSON.stringify({ party: { name: name } })
         });
         await loadParties();
         document.getElementById('party').value = name;
@@ -246,8 +255,12 @@ sugge("quality",false,["Craftboard","Liner Paper","Fluting paper","Fluting/Liner
 
         const res = await fetch(`${serverUrl}${endpoint}`, {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ user_id: parseInt(userId), auth_key: key, reel: reel })
+            headers: {
+                'X-User-ID': userId,
+                'X-Auth-Key': key,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ reel: reel })
         });
 
         const result = await res.json();
@@ -267,13 +280,15 @@ sugge("quality",false,["Craftboard","Liner Paper","Fluting paper","Fluting/Liner
         btn.innerText = "Loading...";
 //using the lookupqr in the server
         const qrText = `${serverUrl}/lookupqr?id=${encodeURIComponent(currentReelData.reel_id)}`;
-        const qrUrl = `${serverUrl}/api/qrcode?user_id=${userId}&auth_key=${encodeURIComponent(key)}&text=${encodeURIComponent(qrText)}&size=512`;
+        const qrUrl = `${serverUrl}/api/qrcode?text=${encodeURIComponent(qrText)}&size=512`;
         
         try {
-            const response = await fetch(qrUrl);
+            const response = await fetch(qrUrl, {
+                headers: { 'X-User-ID': userId, 'X-Auth-Key': key }
+            });
             const blob = await response.blob();
             const imgUrl = URL.createObjectURL(blob);
-
+           
             const printWin = window.open('', '_blank');
             printWin.document.write(`
                  <html>

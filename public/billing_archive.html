@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <link rel="icon" href="favicon.png" type="image/png">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Billed Reels Archive</title>
     <style>
@@ -127,7 +128,12 @@
         }
 
         try {
-            const res = await fetch(`${serverUrl}/api/billed_archive?user_id=${userId}&auth_key=${authKey}&limit=${limit}&offset=${offset}`);
+            const res = await fetch(`${serverUrl}/api/billed_archive?limit=${limit}&offset=${offset}`, {
+                headers: {
+                    'X-User-ID': userId,
+                    'X-Auth-Key': authKey
+                }
+            });
             if (!res.ok) throw new Error("Failed to fetch data");
             
             const newBatch = await res.json();

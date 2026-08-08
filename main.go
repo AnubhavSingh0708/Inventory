@@ -1982,6 +1982,38 @@ func broadcastEvent(eventType, username string, detail interface{}) {
 	}
 }
 
+//---------------------------------------------------------------------------
+// Middleware: requireAuth(adminOnly) checks the X-User-ID and X-Auth-Key
+// headers, authenticates the user, and optionally requires admin privileges.
+// If authentication fails, it returns a 401 Unauthorized response.
+
+func requireAuth(adminOnly bool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		userID, err := strconv.Atoi(c.Get("X-User-ID"))
+		if err != nil || userID <= 0 {
+			return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "missing or invalid X-User-ID header"})
+		}
+		authKey := c.Get("X-Auth-Key")
+		if authKey == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "missing X-Auth-Key header"})
+		}
+
+		var u *User
+		if adminOnly {
+			u, err = authenticateAdmin(userID, authKey)
+		} else {
+			u, err = authenticate(userID, authKey)
+		}
+
+		if err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: err.Error()})
+		}
+
+		c.Locals("user", u)
+		return c.Next()
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Server lifecycle
 // ---------------------------------------------------------------------------
@@ -1994,56 +2026,54 @@ func buildFiberApp() *fiber.App {
 		},
 	})
 	app.Get("/", func(c *fiber.Ctx) error { return c.SendString("Hello, World!") })
-
 	app.Static("/public", "./public")
 
+	// Unauthenticated Public Routes
 	app.Post("/api/login", handleLogin)
-	app.Get("api/validatelogin", handleValidateLogin)
-	app.Get("/api/table", handleGetTable)
-	app.Get("/api/cellsize", handleGetCellSize)
-	app.Post("/api/move", handleMove)
-	app.Post("/api/remove", handleRemove)
-	app.Post("/api/add", handleAdd)
-	app.Post("/api/cellset", handleCellSet)
-	app.Post("/api/tableset", handleTableSet)
-	app.Get("/api/tables", handleListTables)
-	app.Post("/api/table/create", handleCreateTable)
-	app.Post("/api/table/update", handleUpdateTable)
-	app.Post("/api/table/delete", handleDeleteTable)
-	app.Get("/api/map", handleGetMap)
-	app.Post("/api/monthcode/add", handleMonthCodeAdd)
-	app.Post("/api/monthcode/remove", handleMonthCodeRemove)
-	app.Get("/api/monthcodes", handleGetMonthCodes)
-	app.Get("/api/events", handleEvents)
+	app.Get("/lookupqr", handleQRCodeLookup) // Public API using query parameters
 
-	app.Get("/api/reels", handleGetReels)
-	app.Post("/api/reel/add", handleReelAdd)
-	app.Post("/api/reel/remove", handleReelRemove)
-	app.Post("/api/reel/modify", handleReelModify)
-	app.Get("/api/reels/unassigned", handleGetUnassignedReels)
+	// User Authenticated Routes (Requires X-User-ID & X-Auth-Key)
+	userAPI := app.Group("/api", requireAuth(false))
+	userAPI.Get("/validatelogin", handleValidateLogin)
+	userAPI.Get("/table", handleGetTable)
+	userAPI.Get("/cellsize", handleGetCellSize)
+	userAPI.Post("/move", handleMove)
+	userAPI.Post("/remove", handleRemove)
+	userAPI.Post("/add", handleAdd)
+	userAPI.Post("/cellset", handleCellSet)
+	userAPI.Get("/tables", handleListTables)
+	userAPI.Get("/map", handleGetMap)
+	userAPI.Get("/monthcodes", handleGetMonthCodes)
+	userAPI.Get("/events", handleEvents)
+	userAPI.Get("/reels", handleGetReels)
+	userAPI.Post("/reel/add", handleReelAdd)
+	userAPI.Post("/reel/remove", handleReelRemove)
+	userAPI.Post("/reel/modify", handleReelModify)
+	userAPI.Get("/reels/unassigned", handleGetUnassignedReels)
+	userAPI.Get("/parties", handleGetParties)
+	userAPI.Post("/party/add", handlePartyAdd)
+	userAPI.Post("/party/remove", handlePartyRemove)
+	userAPI.Post("/party/modify", handlePartyModify)
+	userAPI.Post("/search", handleSearch)
+	userAPI.Get("/search/meta", handleSearchMeta)
+	userAPI.Get("/qrcode", handleQRCode)
+	userAPI.Post("/dispatch/add", handleDispatchAdd)
+	userAPI.Post("/billing/archive", handleBillingArchive)
+	userAPI.Get("/billing", handleGetBilling)
+	userAPI.Get("/billed_archive", handleGetArchive)
+	userAPI.Post("/dispatch/undo", handleDispatchUndo)
 
-	app.Get("/api/parties", handleGetParties)
-	app.Post("/api/party/add", handlePartyAdd)
-	app.Post("/api/party/remove", handlePartyRemove)
-	app.Post("/api/party/modify", handlePartyModify)
+	// Admin Authenticated Routes (Requires Admin via Headers)
+	adminAPI := app.Group("/api", requireAuth(true))
+	adminAPI.Post("/tableset", handleTableSet)
+	adminAPI.Post("/table/create", handleCreateTable)
+	adminAPI.Post("/table/update", handleUpdateTable)
+	adminAPI.Post("/table/delete", handleDeleteTable)
+	adminAPI.Post("/monthcode/add", handleMonthCodeAdd)
+	adminAPI.Post("/monthcode/remove", handleMonthCodeRemove)
 
-	app.Post("/api/search", handleSearch)
-	app.Get("/api/search/meta", handleSearchMeta)
-
-	app.Get("/api/qrcode", handleQRCode)
-
-	app.Get("/lookupqr", handleQRCodeLookup)
-
-	// New Billing & Dispatch Endpoints
-	app.Post("/api/dispatch/add", handleDispatchAdd)
-	app.Post("/api/billing/archive", handleBillingArchive)
-	app.Get("/api/billing", handleGetBilling)
-	app.Get("/api/billed_archive", handleGetArchive)
-	app.Post("/api/dispatch/undo", handleDispatchUndo)
-
-	//enable compression for all responses, which reduces bandwidth usage and speeds up page load times. The LevelBestSpeed option prioritizes speed over compression ratio, which is suitable for real-time applications where low latency is important.
 	app.Use(compress.New(compress.Config{
-		Level: compress.LevelBestSpeed, // Minimal CPU overhead, ~80% size reduction
+		Level: compress.LevelBestSpeed,
 	}))
 
 	return app
@@ -2468,6 +2498,9 @@ func localIP() (ip string, isV6 bool) {
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Refactored Fiber Handlers (using requireAuth middleware via c.Locals)
+// ---------------------------------------------------------------------------
 
 func handleLogin(c *fiber.Ctx) error {
 	var req loginReq
@@ -2492,36 +2525,14 @@ func handleLogin(c *fiber.Ctx) error {
 }
 
 func handleValidateLogin(c *fiber.Ctx) error {
-
-	userID := c.QueryInt("user_id", -999)
-	authKey := c.Query("auth_key")
-	if userID == -999 || authKey == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "user_id and auth_key query parameters are required"})
-	}
-	_, aerr := authenticate(userID, authKey)
-	if aerr != nil {
-		logAction("unknown", "get_table_denied", fmt.Sprintf("user_id=%d from %s", userID, c.IP()))
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
-	}
 	return c.JSON(fiber.Map{"valid": true})
 }
 
-// handleGetTable returns every cell belonging to one table. table_id is
-// required — pass GET /api/tables to discover valid ids.
 func handleGetTable(c *fiber.Ctx) error {
-	userID := c.QueryInt("user_id", -999)
-	authKey := c.Query("auth_key")
+	u := c.Locals("user").(*User)
 	tableID := c.Query("table_id")
-	if userID == -999 || authKey == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "user_id and auth_key query parameters are required"})
-	}
 	if tableID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "table_id query parameter is required"})
-	}
-	u, aerr := authenticate(userID, authKey)
-	if aerr != nil {
-		logAction("unknown", "get_table_denied", fmt.Sprintf("user_id=%d from %s", userID, c.IP()))
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
 	}
 	if _, terr := getTable(tableID); terr != nil {
 		return c.Status(fiber.StatusNotFound).JSON(errResp{Error: fmt.Sprintf("no table found with id %q", tableID)})
@@ -2534,24 +2545,11 @@ func handleGetTable(c *fiber.Ctx) error {
 	return c.JSON(cells)
 }
 
-// handleGetCellSize reports table_id's item-stack shape. table_id is
-// required, and the response's stack_type tells the client how to interpret
-// cols: it's the width of every level for "vertical" tables, or the width of
-// level 0 only (tapering by one per level) for "horizontal" tables.
 func handleGetCellSize(c *fiber.Ctx) error {
-	userID := c.QueryInt("user_id", -999)
-	authKey := c.Query("auth_key")
+	u := c.Locals("user").(*User)
 	tableID := c.Query("table_id")
-	if userID == -999 || authKey == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "user_id and auth_key query parameters are required"})
-	}
 	if tableID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "table_id query parameter is required"})
-	}
-	u, aerr := authenticate(userID, authKey)
-	if aerr != nil {
-		logAction("unknown", "get_cellsize_denied", fmt.Sprintf("user_id=%d from %s", userID, c.IP()))
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
 	}
 	t, terr := getTable(tableID)
 	if terr != nil {
@@ -2561,16 +2559,11 @@ func handleGetCellSize(c *fiber.Ctx) error {
 	return c.JSON(cellSizeResp{Cols: t.StackCols, Rows: t.StackRows, StackType: t.StackType})
 }
 
-// handleMove relocates an item, possibly across two different tables.
-// from_table_id/to_table_id are both required.
 func handleMove(c *fiber.Ctx) error {
+	u := c.Locals("user").(*User)
 	var req moveReq
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
-	}
-	u, err := authenticate(req.UserID, req.AuthKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
 	}
 	if req.FromTableID == "" || req.ToTableID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "from_table_id and to_table_id are required"})
@@ -2589,16 +2582,11 @@ func handleMove(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"success": true})
 }
 
-// handleRemove requires table_id to identify which table's (row, col) cell
-// to remove the item from.
 func handleRemove(c *fiber.Ctx) error {
+	u := c.Locals("user").(*User)
 	var req removeReq
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
-	}
-	u, err := authenticate(req.UserID, req.AuthKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
 	}
 	if req.TableID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "table_id is required"})
@@ -2612,17 +2600,11 @@ func handleRemove(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"success": true})
 }
 
-// handleAdd requires table_id to identify which table's (row, col) cell to
-// add the item to; the item's (x, y) is validated against that table's own
-// stack shape.
 func handleAdd(c *fiber.Ctx) error {
+	u := c.Locals("user").(*User)
 	var req addReq
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
-	}
-	u, err := authenticate(req.UserID, req.AuthKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
 	}
 	if req.TableID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "table_id is required"})
@@ -2642,18 +2624,11 @@ func handleAdd(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"success": true})
 }
 
-// handleCellSet lets a client resend a whole cell's item list — rearranged,
-// trimmed, or with month codes changed — in one call instead of many
-// add/remove/move requests. Any authenticated user may call this. table_id
-// is required.
 func handleCellSet(c *fiber.Ctx) error {
+	u := c.Locals("user").(*User)
 	var req cellSetReq
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
-	}
-	u, err := authenticate(req.UserID, req.AuthKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
 	}
 	if req.TableID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "table_id is required"})
@@ -2671,17 +2646,11 @@ func handleCellSet(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"success": true})
 }
 
-// handleTableSet replaces every cell belonging to one table (admin only).
-// Every other table's cells are left untouched.
 func handleTableSet(c *fiber.Ctx) error {
+	admin := c.Locals("user").(*User)
 	var req tableSetReq
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
-	}
-	admin, err := authenticateAdmin(req.UserID, req.AuthKey)
-	if err != nil {
-		logAction("unknown", "tableset_denied", "invalid admin credentials from "+c.IP())
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid admin credentials"})
 	}
 	if req.TableID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "table_id is required"})
@@ -2710,24 +2679,8 @@ func handleTableSet(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"success": true})
 }
 
-// ---------------------------------------------------------------------------
-// Table management handlers — CRUD for physical tables/regions themselves
-// (distinct from handleTableSet, which manages one table's cell contents),
-// plus serving the uploaded map.svg.
-// ---------------------------------------------------------------------------
-
-// handleListTables returns every configured table. Any authenticated user
-// may call this — clients need it to populate a table picker.
 func handleListTables(c *fiber.Ctx) error {
-	userID := c.QueryInt("user_id", -999)
-	authKey := c.Query("auth_key")
-	if userID == -999 || authKey == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "user_id and auth_key query parameters are required"})
-	}
-	u, err := authenticate(userID, authKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
-	}
+	u := c.Locals("user").(*User)
 	tables, err := getAllTables()
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(errResp{Error: "failed to read tables: " + err.Error()})
@@ -2736,18 +2689,11 @@ func handleListTables(c *fiber.Ctx) error {
 	return c.JSON(tables)
 }
 
-// handleCreateTable registers a new physical table (admin only). Normally
-// tables are discovered by parsing map.svg during setup, but this lets an
-// admin add one by hand too (e.g. before updating the map file).
 func handleCreateTable(c *fiber.Ctx) error {
+	admin := c.Locals("user").(*User)
 	var req tableCreateReq
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
-	}
-	admin, err := authenticateAdmin(req.UserID, req.AuthKey)
-	if err != nil {
-		logAction("unknown", "table_create_denied", "invalid admin credentials from "+c.IP())
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid admin credentials"})
 	}
 	if err := createTable(req.Table); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: err.Error()})
@@ -2757,17 +2703,11 @@ func handleCreateTable(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"success": true})
 }
 
-// handleUpdateTable changes an existing table's parameters (admin only) —
-// name, grid size, stacking type, row length, or stack levels.
 func handleUpdateTable(c *fiber.Ctx) error {
+	admin := c.Locals("user").(*User)
 	var req tableUpdateReq
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
-	}
-	admin, err := authenticateAdmin(req.UserID, req.AuthKey)
-	if err != nil {
-		logAction("unknown", "table_update_denied", "invalid admin credentials from "+c.IP())
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid admin credentials"})
 	}
 	if req.Table.ID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "table id is required"})
@@ -2780,17 +2720,11 @@ func handleUpdateTable(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"success": true})
 }
 
-// handleDeleteTable removes a table and every cell that belonged to it
-// (admin only, irreversible).
 func handleDeleteTable(c *fiber.Ctx) error {
+	admin := c.Locals("user").(*User)
 	var req tableDeleteReq
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
-	}
-	admin, err := authenticateAdmin(req.UserID, req.AuthKey)
-	if err != nil {
-		logAction("unknown", "table_delete_denied", "invalid admin credentials from "+c.IP())
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid admin credentials"})
 	}
 	if err := deleteTable(req.ID); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: err.Error()})
@@ -2800,20 +2734,8 @@ func handleDeleteTable(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"success": true})
 }
 
-// handleGetMap serves the uploaded floor-plan SVG (./map.svg) byte-for-byte.
-// The frontend is responsible for interpreting refpoint1/refpoint2 and for
-// matching each shape's id to a table id from GET /api/tables — the backend
-// does neither.
 func handleGetMap(c *fiber.Ctx) error {
-	userID := c.QueryInt("user_id", -999)
-	authKey := c.Query("auth_key")
-	if userID == -999 || authKey == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "user_id and auth_key query parameters are required"})
-	}
-	u, err := authenticate(userID, authKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
-	}
+	u := c.Locals("user").(*User)
 	data, rerr := os.ReadFile(mapSVGFile)
 	if rerr != nil {
 		return c.Status(fiber.StatusNotFound).JSON(errResp{Error: "no map has been uploaded yet"})
@@ -2824,15 +2746,7 @@ func handleGetMap(c *fiber.Ctx) error {
 }
 
 func handleGetMonthCodes(c *fiber.Ctx) error {
-	userID := c.QueryInt("user_id", -999)
-	authKey := c.Query("auth_key")
-	if userID == -999 || authKey == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "user_id and auth_key query parameters are required"})
-	}
-	u, err := authenticate(userID, authKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
-	}
+	u := c.Locals("user").(*User)
 	codes, err := getAllMonthCodes()
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(errResp{Error: "failed to read month codes: " + err.Error()})
@@ -2842,17 +2756,13 @@ func handleGetMonthCodes(c *fiber.Ctx) error {
 }
 
 func handleMonthCodeAdd(c *fiber.Ctx) error {
+	admin := c.Locals("user").(*User)
 	var req monthCodeAddReq
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
 	}
 	if req.Code == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "code is required"})
-	}
-	admin, err := authenticateAdmin(req.UserID, req.AuthKey)
-	if err != nil {
-		logAction("unknown", "monthcode_add_denied", "invalid admin credentials from "+c.IP())
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid admin credentials"})
 	}
 	id, err := addMonthCode(req.Code)
 	if err != nil {
@@ -2864,14 +2774,10 @@ func handleMonthCodeAdd(c *fiber.Ctx) error {
 }
 
 func handleMonthCodeRemove(c *fiber.Ctx) error {
+	admin := c.Locals("user").(*User)
 	var req monthCodeRemoveReq
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
-	}
-	admin, err := authenticateAdmin(req.UserID, req.AuthKey)
-	if err != nil {
-		logAction("unknown", "monthcode_remove_denied", "invalid admin credentials from "+c.IP())
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid admin credentials"})
 	}
 	if err := removeMonthCode(req.ID); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: err.Error()})
@@ -2881,20 +2787,8 @@ func handleMonthCodeRemove(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"success": true})
 }
 
-// ---------------------------------------------------------------------------
-// Party handlers
-// ---------------------------------------------------------------------------
-
 func handleGetParties(c *fiber.Ctx) error {
-	userID := c.QueryInt("user_id", -999)
-	authKey := c.Query("auth_key")
-	if userID == -999 || authKey == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "user_id and auth_key query parameters are required"})
-	}
-	u, err := authenticate(userID, authKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
-	}
+	u := c.Locals("user").(*User)
 	parties, err := getAllParties()
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(errResp{Error: "failed to read parties: " + err.Error()})
@@ -2904,13 +2798,10 @@ func handleGetParties(c *fiber.Ctx) error {
 }
 
 func handlePartyAdd(c *fiber.Ctx) error {
+	u := c.Locals("user").(*User)
 	var req partyAddReq
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
-	}
-	u, err := authenticate(req.UserID, req.AuthKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
 	}
 	id, err := addParty(req.Party)
 	if err != nil {
@@ -2924,13 +2815,10 @@ func handlePartyAdd(c *fiber.Ctx) error {
 }
 
 func handlePartyRemove(c *fiber.Ctx) error {
+	u := c.Locals("user").(*User)
 	var req partyRemoveReq
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
-	}
-	u, err := authenticate(req.UserID, req.AuthKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
 	}
 	if err := removeParty(req.ID); err != nil {
 		logAction(u.Username, "party_remove_failed", err.Error())
@@ -2942,13 +2830,10 @@ func handlePartyRemove(c *fiber.Ctx) error {
 }
 
 func handlePartyModify(c *fiber.Ctx) error {
+	u := c.Locals("user").(*User)
 	var req partyModifyReq
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
-	}
-	u, err := authenticate(req.UserID, req.AuthKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
 	}
 	if req.Party.ID == 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "party id is required"})
@@ -2962,115 +2847,69 @@ func handlePartyModify(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"success": true})
 }
 
-// API for billing and dispatch
-// ---------------------------------------------------------------------------
-// Billing & Archive Handlers
-// ---------------------------------------------------------------------------
-
 func handleDispatchAdd(c *fiber.Ctx) error {
+	u := c.Locals("user").(*User)
 	var req dispatchAddReq
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
 	}
-	u, err := authenticate(req.UserID, req.AuthKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
-	}
 	if req.ReelID == "" || req.DispatchDate == "" || req.DispatchTime == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "reel_id, dispatch_date, and dispatch_time are required"})
 	}
-
 	if err := moveReelToBilling(req.ReelID, req.DispatchDate, req.DispatchTime); err != nil {
 		logAction(u.Username, "dispatch_add_failed", err.Error())
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: err.Error()})
 	}
-
 	logAction(u.Username, "dispatch_add", fmt.Sprintf("reel_id=%s dispatched", req.ReelID))
 	broadcastEvent("dispatch_add", u.Username, req)
 	return c.JSON(fiber.Map{"success": true})
 }
 
 func handleBillingArchive(c *fiber.Ctx) error {
+	u := c.Locals("user").(*User)
 	var req billedArchiveReq
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
 	}
-	u, err := authenticate(req.UserID, req.AuthKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
-	}
 	if req.ReelID == "" || req.BilledDate == "" || req.BilledTime == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "reel_id, billed_date, and billed_time are required"})
 	}
-
 	if err := moveBillingToArchive(req.ReelID, req.BilledDate, req.BilledTime); err != nil {
 		logAction(u.Username, "billed_archive_failed", err.Error())
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: err.Error()})
 	}
-
 	logAction(u.Username, "billed_archive", fmt.Sprintf("reel_id=%s archived", req.ReelID))
 	broadcastEvent("billed_archive", u.Username, req)
 	return c.JSON(fiber.Map{"success": true})
 }
 
 func handleGetBilling(c *fiber.Ctx) error {
-	userID := c.QueryInt("user_id", -999)
-	authKey := c.Query("auth_key")
-	if userID == -999 || authKey == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "user_id and auth_key query parameters are required"})
-	}
-	u, err := authenticate(userID, authKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
-	}
-
+	u := c.Locals("user").(*User)
 	billingReels, err := getAllBilling()
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(errResp{Error: "failed to fetch billing records: " + err.Error()})
 	}
-
 	logAction(u.Username, "get_billing", fmt.Sprintf("fetched %d records from %s", len(billingReels), c.IP()))
 	return c.JSON(billingReels)
 }
 
 func handleGetArchive(c *fiber.Ctx) error {
-	userID := c.QueryInt("user_id", -999)
-	authKey := c.Query("auth_key")
-	if userID == -999 || authKey == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "user_id and auth_key query parameters are required"})
-	}
-	u, err := authenticate(userID, authKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
-	}
-
-	// Read optional pagination query params (?limit=100&offset=0)
+	u := c.Locals("user").(*User)
 	limit := c.QueryInt("limit", 100)
 	offset := c.QueryInt("offset", 0)
-
 	archiveReels, err := getAllArchive(limit, offset)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(errResp{Error: "failed to fetch archive records: " + err.Error()})
 	}
-
 	logAction(u.Username, "get_archive", fmt.Sprintf("fetched %d records (offset %d) from %s", len(archiveReels), offset, c.IP()))
 	return c.JSON(archiveReels)
 }
 
-type dispatchUndoReq struct {
-	UserID  int    `json:"user_id"`
-	AuthKey string `json:"auth_key"`
-	ReelID  string `json:"reel_id"`
-}
-
 func handleDispatchUndo(c *fiber.Ctx) error {
+	u := c.Locals("user").(*User)
 	var req dispatchUndoReq
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
-	}
-	u, err := authenticate(req.UserID, req.AuthKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
 	}
 	if err := moveBillingToReels(req.ReelID); err != nil {
 		logAction(u.Username, "dispatch_undo_failed", err.Error())
@@ -3081,29 +2920,227 @@ func handleDispatchUndo(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"success": true})
 }
 
-// hnadle getunassigned reels
 func handleGetUnassignedReels(c *fiber.Ctx) error {
-	userID := c.QueryInt("user_id", -999)
-	authKey := c.Query("auth_key")
-	if userID == -999 || authKey == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "user_id and auth_key query parameters are required"})
-	}
-	u, err := authenticate(userID, authKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
-	}
-
+	u := c.Locals("user").(*User)
 	unassigned, err := getUnassignedReels()
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(errResp{Error: "failed to fetch unassigned reels: " + err.Error()})
 	}
-
 	logAction(u.Username, "get_unassigned_reels", fmt.Sprintf("count=%d from %s", len(unassigned), c.IP()))
 	return c.JSON(unassigned)
 }
 
-// handle web QR code lookups
-// handle web QR code lookups across all 3 databases
+func handleEvents(c *fiber.Ctx) error {
+	u := c.Locals("user").(*User)
+	logAction(u.Username, "subscribe_events", "from "+c.IP())
+
+	c.Set("Content-Type", "text/event-stream")
+	c.Set("Cache-Control", "no-cache")
+	c.Set("Connection", "keep-alive")
+	c.Set("Access-Control-Allow-Origin", "*")
+
+	ch := subscribeEvents()
+	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+		defer unsubscribeEvents(ch)
+		fmt.Fprint(w, ": connected\n\n")
+		if err := w.Flush(); err != nil {
+			return
+		}
+		for {
+			select {
+			case ev, ok := <-ch:
+				if !ok {
+					return
+				}
+				b, err := json.Marshal(ev)
+				if err != nil {
+					continue
+				}
+				fmt.Fprintf(w, "data: %s\n\n", b)
+				if err := w.Flush(); err != nil {
+					return
+				}
+			case <-time.After(25 * time.Second):
+				fmt.Fprint(w, ": heartbeat\n\n")
+				if err := w.Flush(); err != nil {
+					return
+				}
+			}
+		}
+	})
+	return nil
+}
+
+func handleGetReels(c *fiber.Ctx) error {
+	u := c.Locals("user").(*User)
+	start := c.QueryInt("start", 0)
+	end := c.QueryInt("end", math.MaxInt32)
+	reels, err := getAllReels(start, end)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(errResp{Error: "failed to read reels: " + err.Error()})
+	}
+	logAction(u.Username, "get_reels", fmt.Sprintf("start=%d end=%d results=%d from %s", start, end, len(reels), c.IP()))
+	return c.JSON(reels)
+}
+
+func handleReelAdd(c *fiber.Ctx) error {
+	u := c.Locals("user").(*User)
+	var req reelAddReq
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
+	}
+	if req.Reel.ReelID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "reel_id is required"})
+	}
+	id, err := addReel(req.Reel)
+	if err != nil {
+		logAction(u.Username, "reel_add_failed", err.Error())
+		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: err.Error()})
+	}
+	req.Reel.ID = int(id)
+	logAction(u.Username, "reel_add", fmt.Sprintf("id=%d reel_id=%s", id, req.Reel.ReelID))
+	broadcastEvent("reel_add", u.Username, req.Reel)
+	return c.JSON(fiber.Map{"success": true, "id": id})
+}
+
+func handleReelRemove(c *fiber.Ctx) error {
+	u := c.Locals("user").(*User)
+	var req reelRemoveReq
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
+	}
+	if err := removeReel(req.ID); err != nil {
+		logAction(u.Username, "reel_remove_failed", err.Error())
+		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: err.Error()})
+	}
+	logAction(u.Username, "reel_remove", fmt.Sprintf("id=%d", req.ID))
+	broadcastEvent("reel_remove", u.Username, fiber.Map{"id": req.ID})
+	return c.JSON(fiber.Map{"success": true})
+}
+
+func handleReelModify(c *fiber.Ctx) error {
+	u := c.Locals("user").(*User)
+	var req reelModifyReq
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
+	}
+	if req.Reel.ID == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "reel id is required"})
+	}
+	if err := modifyReel(req.Reel); err != nil {
+		logAction(u.Username, "reel_modify_failed", err.Error())
+		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: err.Error()})
+	}
+	logAction(u.Username, "reel_modify", fmt.Sprintf("id=%d", req.Reel.ID))
+	broadcastEvent("reel_modify", u.Username, req.Reel)
+	return c.JSON(fiber.Map{"success": true})
+}
+
+func handleSearch(c *fiber.Ctx) error {
+	u := c.Locals("user").(*User)
+	var req SearchRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
+	}
+	target, ok := searchRegistry[strings.ToLower(req.Target)]
+	if !ok {
+		names := make([]string, 0, len(searchRegistry))
+		for k := range searchRegistry {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		return c.Status(fiber.StatusBadRequest).JSON(errResp{
+			Error: fmt.Sprintf("unknown search target %q; valid targets: %s", req.Target, strings.Join(names, ", ")),
+		})
+	}
+	for _, f := range req.Filters {
+		if f.Field == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "every filter needs a non-empty field"})
+		}
+	}
+
+	records, err := target.Fetch()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(errResp{Error: "failed to load data: " + err.Error()})
+	}
+
+	filtered := applyFilters(records, req.Filters, req.Match)
+	if req.SortField != "" {
+		sortRecords(filtered, req.SortField, req.SortOrder)
+	}
+	total := len(filtered)
+
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	page := paginate(filtered, limit, req.Offset)
+
+	logAction(u.Username, "search", fmt.Sprintf("target=%s filters=%d match=%s results=%d/%d", req.Target, len(req.Filters), req.Match, len(page), total))
+	return c.JSON(SearchResponse{Target: strings.ToLower(req.Target), Total: total, Count: len(page), Results: page})
+}
+
+func handleSearchMeta(c *fiber.Ctx) error {
+	ops := []string{"eq", "neq", "contains", "starts_with", "ends_with", "gt", "gte", "lt", "lte", "in", "between"}
+	meta := make(fiber.Map, len(searchRegistry))
+	for name, t := range searchRegistry {
+		meta[name] = fiber.Map{"fields": t.Fields, "ops": ops}
+	}
+	return c.JSON(meta)
+}
+
+func handleQRCode(c *fiber.Ctx) error {
+	u := c.Locals("user").(*User)
+	text := c.Query("text")
+	if text == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "text query parameter is required"})
+	}
+
+	size := c.QueryInt("size", 256)
+	if size < 32 {
+		size = 32
+	}
+	if size > 2048 {
+		size = 2048
+	}
+
+	level := parseRecoveryLevel(c.Query("level", "H"))
+
+	png, err := qrcode.Encode(text, level, size)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(errResp{Error: "failed to generate QR code: " + err.Error()})
+	}
+
+	logAction(u.Username, "qrcode", fmt.Sprintf("text_len=%d size=%d level=%s", len(text), size, c.Query("level", "H")))
+	c.Set("Content-Type", "image/png")
+	return c.Send(png)
+}
+
+type dispatchUndoReq struct {
+	UserID  int    `json:"user_id"`
+	AuthKey string `json:"auth_key"`
+	ReelID  string `json:"reel_id"`
+}
+
+// Add this helper function near handleQRCode
+func parseRecoveryLevel(s string) qrcode.RecoveryLevel {
+	switch strings.ToUpper(strings.TrimSpace(s)) {
+	case "L":
+		return qrcode.Low
+	case "M":
+		return qrcode.Medium
+	case "Q":
+		return qrcode.High
+	case "H":
+		return qrcode.Highest
+	default:
+		return qrcode.Highest
+	}
+}
+
 func handleQRCodeLookup(c *fiber.Ctx) error {
 	id := c.Query("id")
 
@@ -3213,151 +3250,6 @@ func handleQRCodeLookup(c *fiber.Ctx) error {
 	)
 
 	return c.Type("html").SendString(htmlResponse)
-}
-
-// handleEvents streams every change made on the server as Server-Sent
-// Events, so clients can replicate table state incrementally instead of
-// re-polling GET /api/table. Each event looks like:
-//
-//	data: {"event_time":"...","type":"add","username":"alice","detail":{...}}
-func handleEvents(c *fiber.Ctx) error {
-	userID := c.QueryInt("user_id", -999)
-	authKey := c.Query("auth_key")
-	if userID == -999 || authKey == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "user_id and auth_key query parameters are required"})
-	}
-	u, err := authenticate(userID, authKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
-	}
-	logAction(u.Username, "subscribe_events", "from "+c.IP())
-
-	c.Set("Content-Type", "text/event-stream")
-	c.Set("Cache-Control", "no-cache")
-	c.Set("Connection", "keep-alive")
-	c.Set("Access-Control-Allow-Origin", "*")
-
-	ch := subscribeEvents()
-	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
-		defer unsubscribeEvents(ch)
-		fmt.Fprint(w, ": connected\n\n")
-		if err := w.Flush(); err != nil {
-			return
-		}
-		for {
-			select {
-			case ev, ok := <-ch:
-				if !ok {
-					return
-				}
-				b, err := json.Marshal(ev)
-				if err != nil {
-					continue
-				}
-				fmt.Fprintf(w, "data: %s\n\n", b)
-				if err := w.Flush(); err != nil {
-					return
-				}
-			case <-time.After(25 * time.Second):
-				// heartbeat comment keeps the connection alive through proxies
-				fmt.Fprint(w, ": heartbeat\n\n")
-				if err := w.Flush(); err != nil {
-					return
-				}
-			}
-		}
-	})
-	return nil
-}
-
-// ---------------------------------------------------------------------------
-// Reel record handlers
-// ---------------------------------------------------------------------------
-
-func handleGetReels(c *fiber.Ctx) error {
-	userID := c.QueryInt("user_id", -999)
-	authKey := c.Query("auth_key")
-	if userID == -999 || authKey == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "user_id and auth_key query parameters are required"})
-	}
-	u, err := authenticate(userID, authKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
-	}
-	// start/end select a window over reels ordered by recency: 0 = the most
-	// recently added reel, 1 = the one before it, etc. Omit both to get
-	// every reel. If end exceeds what's available, it's clamped down rather
-	// than erroring, so the caller gets whatever exists in that window.
-	start := c.QueryInt("start", 0)
-	end := c.QueryInt("end", math.MaxInt32)
-	reels, err := getAllReels(start, end)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(errResp{Error: "failed to read reels: " + err.Error()})
-	}
-	logAction(u.Username, "get_reels", fmt.Sprintf("start=%d end=%d results=%d from %s", start, end, len(reels), c.IP()))
-	return c.JSON(reels)
-}
-
-func handleReelAdd(c *fiber.Ctx) error {
-	var req reelAddReq
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
-	}
-	u, err := authenticate(req.UserID, req.AuthKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
-	}
-	if req.Reel.ReelID == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "reel_id is required"})
-	}
-	id, err := addReel(req.Reel)
-	if err != nil {
-		logAction(u.Username, "reel_add_failed", err.Error())
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: err.Error()})
-	}
-	req.Reel.ID = int(id)
-	logAction(u.Username, "reel_add", fmt.Sprintf("id=%d reel_id=%s", id, req.Reel.ReelID))
-	broadcastEvent("reel_add", u.Username, req.Reel)
-	return c.JSON(fiber.Map{"success": true, "id": id})
-}
-
-func handleReelRemove(c *fiber.Ctx) error {
-	var req reelRemoveReq
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
-	}
-	u, err := authenticate(req.UserID, req.AuthKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
-	}
-	if err := removeReel(req.ID); err != nil {
-		logAction(u.Username, "reel_remove_failed", err.Error())
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: err.Error()})
-	}
-	logAction(u.Username, "reel_remove", fmt.Sprintf("id=%d", req.ID))
-	broadcastEvent("reel_remove", u.Username, fiber.Map{"id": req.ID})
-	return c.JSON(fiber.Map{"success": true})
-}
-
-func handleReelModify(c *fiber.Ctx) error {
-	var req reelModifyReq
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
-	}
-	u, err := authenticate(req.UserID, req.AuthKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
-	}
-	if req.Reel.ID == 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "reel id is required"})
-	}
-	if err := modifyReel(req.Reel); err != nil {
-		logAction(u.Username, "reel_modify_failed", err.Error())
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: err.Error()})
-	}
-	logAction(u.Username, "reel_modify", fmt.Sprintf("id=%d", req.Reel.ID))
-	broadcastEvent("reel_modify", u.Username, req.Reel)
-	return c.JSON(fiber.Map{"success": true})
 }
 
 // ---------------------------------------------------------------------------
@@ -3769,137 +3661,6 @@ func paginate(records []map[string]interface{}, limit, offset int) []map[string]
 		end = offset + limit
 	}
 	return records[offset:end]
-}
-
-// handleSearch is the single entry point for querying any registered table.
-func handleSearch(c *fiber.Ctx) error {
-	var req SearchRequest
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "malformed request body: " + err.Error()})
-	}
-	u, err := authenticate(req.UserID, req.AuthKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
-	}
-
-	target, ok := searchRegistry[strings.ToLower(req.Target)]
-	if !ok {
-		names := make([]string, 0, len(searchRegistry))
-		for k := range searchRegistry {
-			names = append(names, k)
-		}
-		sort.Strings(names)
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{
-			Error: fmt.Sprintf("unknown search target %q; valid targets: %s", req.Target, strings.Join(names, ", ")),
-		})
-	}
-	for _, f := range req.Filters {
-		if f.Field == "" {
-			return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "every filter needs a non-empty field"})
-		}
-	}
-
-	records, err := target.Fetch()
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(errResp{Error: "failed to load data: " + err.Error()})
-	}
-
-	filtered := applyFilters(records, req.Filters, req.Match)
-	if req.SortField != "" {
-		sortRecords(filtered, req.SortField, req.SortOrder)
-	}
-	total := len(filtered)
-
-	limit := req.Limit
-	if limit <= 0 {
-		limit = 100
-	}
-	if limit > 1000 {
-		limit = 1000
-	}
-	page := paginate(filtered, limit, req.Offset)
-
-	logAction(u.Username, "search", fmt.Sprintf("target=%s filters=%d match=%s results=%d/%d", req.Target, len(req.Filters), req.Match, len(page), total))
-	return c.JSON(SearchResponse{Target: strings.ToLower(req.Target), Total: total, Count: len(page), Results: page})
-}
-
-// handleSearchMeta describes every searchable target and its fields, so a
-// client can build queries programmatically without hardcoding field names.
-func handleSearchMeta(c *fiber.Ctx) error {
-	userID := c.QueryInt("user_id", -999)
-	authKey := c.Query("auth_key")
-	if userID == -999 || authKey == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "user_id and auth_key query parameters are required"})
-	}
-	if _, err := authenticate(userID, authKey); err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
-	}
-	ops := []string{"eq", "neq", "contains", "starts_with", "ends_with", "gt", "gte", "lt", "lte", "in", "between"}
-	meta := make(fiber.Map, len(searchRegistry))
-	for name, t := range searchRegistry {
-		meta[name] = fiber.Map{"fields": t.Fields, "ops": ops}
-	}
-	return c.JSON(meta)
-}
-
-// ---------------------------------------------------------------------------
-// QR code generation
-// ---------------------------------------------------------------------------
-
-// handleQRCode renders any text (reel IDs, item numbers, URLs, etc.) as a
-// QR code PNG image. Defaults to recovery level H (Highest, ~30% error
-// correction) since these are commonly printed on physical labels/reels
-// where some damage or dirt is expected — plain text scans best at this
-// level. Level is overridable via ?level=L|M|Q|H.
-func handleQRCode(c *fiber.Ctx) error {
-	userID := c.QueryInt("user_id", -999)
-	authKey := c.Query("auth_key")
-	if userID == -999 || authKey == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "user_id and auth_key query parameters are required"})
-	}
-	u, err := authenticate(userID, authKey)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(errResp{Error: "invalid credentials"})
-	}
-
-	text := c.Query("text")
-	if text == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "text query parameter is required"})
-	}
-
-	size := c.QueryInt("size", 256)
-	if size < 32 {
-		size = 32
-	}
-	if size > 2048 {
-		size = 2048
-	}
-
-	level := parseRecoveryLevel(c.Query("level", "H"))
-
-	png, err := qrcode.Encode(text, level, size)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(errResp{Error: "failed to generate QR code: " + err.Error()})
-	}
-
-	logAction(u.Username, "qrcode", fmt.Sprintf("text_len=%d size=%d level=%s", len(text), size, c.Query("level", "H")))
-	c.Set("Content-Type", "image/png")
-	return c.Send(png)
-}
-
-func parseRecoveryLevel(s string) qrcode.RecoveryLevel {
-	switch strings.ToUpper(strings.TrimSpace(s)) {
-	case "L":
-		return qrcode.Low
-	case "M":
-		return qrcode.Medium
-	case "Q":
-		return qrcode.High
-	case "H":
-		return qrcode.Highest
-	default:
-		return qrcode.Highest
-	}
 }
 
 // wizardTableEntry carries setup-time state for one physical table (region)

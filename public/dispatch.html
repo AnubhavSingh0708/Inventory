@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <link rel="icon" href="favicon.png" type="image/png">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dispatched Reels (Pending Billing)</title>
     <style>
@@ -100,9 +101,12 @@
         }
 
         try {
-            const res = await fetch(`${serverUrl}/api/billing?user_id=${userId}&auth_key=${authKey}`);
-            
-            // IF THE SERVER RETURNS AN ERROR, EXTRACT THE EXACT MESSAGE:
+            const res = await fetch(`${serverUrl}/api/billing`, {
+                headers: {
+                    'X-User-ID': userId,
+                    'X-Auth-Key': authKey
+                }
+            });
             if (!res.ok) {
                 let errMsg = `HTTP Error ${res.status}`;
                 try {
@@ -116,7 +120,6 @@
             renderTable();
         } catch (err) {
             console.error(err);
-            // NOW YOU WILL SEE THE EXACT DATABASE ERROR IN RED TEXT:
             document.getElementById('table-body').innerHTML = `<tr><td colspan="5" style="color:red; font-weight:bold;">Error: ${err.message}</td></tr>`;
         }
     }
@@ -196,10 +199,9 @@
         try {
             const res = await fetch(`${serverUrl}/api/billing/archive`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json' ,'X-User-ID': userId,'X-Auth-Key': authKey
+                },
                 body: JSON.stringify({
-                    user_id: userId,
-                    auth_key: authKey,
                     reel_id: reelId,
                     billed_date: dateStr,
                     billed_time: timeStr
@@ -222,10 +224,9 @@
         try {
             const res = await fetch(`${serverUrl}/api/dispatch/undo`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json','X-User-ID': userId,'X-Auth-Key': authKey
+                },
                 body: JSON.stringify({
-                    user_id: userId,
-                    auth_key: authKey,
                     reel_id: reelId
                 })
             });

@@ -134,7 +134,7 @@
 
         async function initMeta() {
             try {
-                const res = await fetch(`${url}/api/search/meta?user_id=${uid}&auth_key=${auth}`);
+                const res = await fetch(`${url}/api/search/meta`, {headers: {'X-User-ID': uid,'X-Auth-Key': auth}});
                 searchMeta = await res.json();
                 
                 const targetSelect = document.getElementById('target');
@@ -244,8 +244,6 @@
             const limit = parseInt(document.getElementById('limit').value) || 100;
 
             const payload = {
-                user_id: parseInt(uid),
-                auth_key: auth,
                 target: target,
                 match: match,
                 filters: activeFilters,
@@ -259,7 +257,9 @@
             try {
                 const res = await fetch(`${url}/api/search`, {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
+                    headers: {'Content-Type': 'application/json',
+                        'X-User-ID': uid,'X-Auth-Key': auth
+                    },
                     body: JSON.stringify(payload)
                 });
                 
