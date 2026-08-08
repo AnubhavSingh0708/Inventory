@@ -3,24 +3,6 @@
 // Stack: Fyne v2 (desktop UI + system tray) + Fiber v2 (HTTP API server) + SQLite
 // (via mattn/go-sqlite3 — swap for modernc.org/sqlite in go.mod if you prefer a
 // pure-Go/no-CGO driver; both use database/sql the same way).
-//
-// BUILD
-//
-//	go mod tidy
-//	go build -o inventory-manager .          (linux)
-//	go build -o inventory-manager.exe .      (windows, or cross-compile with
-//	                                           CGO_ENABLED=1 and a mingw toolchain
-//	                                           since go-sqlite3 uses CGO)
-//
-// ASSETS — you said you will design these yourself. Drop them in an "assets"
-// folder next to the binary; the app falls back to built-in icons if a file is
-// missing, so nothing crashes if you have not made them yet:
-//
-//	assets/app_icon.png        - main window / taskbar icon
-//	assets/tray_running.png    - system tray icon while the server is running
-//	assets/tray_stopped.png    - system tray icon while the server is stopped
-//	assets/logo.png            - shown on the first setup wizard page
-//
 // DATA FILES created next to the binary at runtime:
 //
 //	inventory.db   - sqlite database (settings, users, cells, logs)
@@ -98,8 +80,8 @@ var (
 	serverMu     sync.Mutex
 	serverUp     bool
 	serverPort   string
-	serverAddr   string // last known bind address for display
-	serverScheme string // "https" (default) or "http" (localhost-only mode)
+	serverAddr   string 
+	serverScheme string 
 )
 
 // palette used for cell colour picking in the grid editor
@@ -119,11 +101,7 @@ type User struct {
 	IsAdmin      bool
 	CreatedAt    string
 }
-
-// AuthKey is one issued device/session credential: a user logs in with their
-// username + password once and gets back a key, which every subsequent API
-// call presents instead of the password (id + key, not id + password). Each
-// login issues a brand new key, so a single user can hold one per device.
+//auth key
 type AuthKey struct {
 	Key       string `json:"key"`
 	UserID    int    `json:"user_id"`
@@ -132,11 +110,7 @@ type AuthKey struct {
 	LastUsed  string `json:"last_used"`
 }
 
-// CellItem's X/Y locate it within its cell's stack: Y is the level (0 =
-// lowest/base level), X is the position along that level. The shape of the
-// stack (how many slots each level has) is defined per-table by that
-// table's StackType/StackCols/StackRows — see the Table doc comment and
-// validateStackPosition.
+// CellItem
 type CellItem struct {
 	Number    int    `json:"number"`
 	MonthCode string `json:"month_code"`
@@ -337,9 +311,7 @@ func updateTrayIcon() {
 	}
 }
 
-// loadResource tries to load a PNG from the assets directory and falls back
-// to a built-in theme icon if the file doesn't exist yet (the user said they
-// will supply their own assets later).
+
 func loadResource(name string, fallback fyne.Resource) fyne.Resource {
 	path := assetsDir + string(os.PathSeparator) + name
 	if _, err := os.Stat(path); err != nil {
@@ -357,20 +329,20 @@ func loadResource(name string, fallback fyne.Resource) fyne.Resource {
 // ---------------------------------------------------------------------------
 
 func openDB(path string) (*sql.DB, error) {
-	// Add _synchronous=NORMAL for WAL mode performance boost
+	
 	conn, err := sql.Open("sqlite3", path+"?_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=on&_synchronous=NORMAL")
 	if err != nil {
 		return nil, err
 	}
 
-	// WAL mode allows up to 25 concurrent readers without blocking writes
+	
 	conn.SetMaxOpenConns(25)
 	conn.SetMaxIdleConns(5)
 	conn.SetConnMaxLifetime(5 * time.Minute)
 
-	// SQLite tuning pragmas for lower latency
+
 	_, _ = conn.Exec(`
-		PRAGMA cache_size = -64000; -- Allocate 64MB memory cache for reads
+		PRAGMA cache_size = -200000; -- Allocate 64MB memory cache for reads
 		PRAGMA temp_store = MEMORY; -- Store temporary tables in RAM
 	`)
 	return conn, nil
@@ -2081,19 +2053,7 @@ func buildFiberApp() *fiber.App {
 
 // startServer boots the fiber server on the given port over HTTPS and keeps
 // running until stopServer() is called (survives the main window being
-// hidden). TLS is provided one of two ways:
-//
-//   - If a public domain name is configured (Server Info -> TLS Domain),
-//     certmagic — the same automatic-HTTPS library that powers Caddy —
-//     manages a real, browser-trusted certificate via Let's Encrypt,
-//     including renewal. This requires the domain to resolve to this
-//     machine and ports 80/443 reachable for the ACME HTTP-01 challenge.
-//   - Otherwise, a self-signed certificate is generated (once) for
-//     "localhost" and this machine's LAN IP and reused across restarts.
-//     Public CAs cannot issue trusted certificates for bare IP addresses,
-//     so for LAN-only access this is the standard approach: clients must
-//     accept/trust the certificate once (browsers will show a warning the
-//     first time; a fingerprint is logged to help verify it).
+// hidden). 
 func startServer(port string) {
 	serverMu.Lock()
 	if serverUp {
@@ -2104,9 +2064,6 @@ func startServer(port string) {
 
 	// Ports below 1024 ("privileged" ports, e.g. 80/443) require
 	// Administrator on Windows or root on Linux/macOS. Rather than fail
-	// with an opaque "permission denied" bind error, check up front and
-	// offer to relaunch elevated. This applies even in localhost mode —
-	// the restriction is about the port number, not who can reach it.
 	if isPrivilegedPort(port) && !isElevated() {
 		requestElevationForPort(port)
 		return
