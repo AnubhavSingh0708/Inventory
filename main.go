@@ -3,6 +3,7 @@
 // Stack: Fyne v2 (desktop UI + system tray) + Fiber v2 (HTTP API server) + SQLite
 // (via mattn/go-sqlite3 — swap for modernc.org/sqlite in go.mod if you prefer a
 // pure-Go/no-CGO driver; both use database/sql the same way).
+
 // DATA FILES created next to the binary at runtime:
 //
 //	inventory.db   - sqlite database (settings, users, cells, logs)
@@ -11,6 +12,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -26,6 +28,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"image/color"
+	"image/png"
 	"io"
 	"log"
 	"math"
@@ -67,7 +70,7 @@ import (
 const (
 	dbFile      = "inventory.db"
 	logFile     = "logs.txt"
-	maxLogLines = 1024
+	maxLogLines = 4096
 	assetsDir   = "assets"
 )
 
@@ -80,8 +83,8 @@ var (
 	serverMu     sync.Mutex
 	serverUp     bool
 	serverPort   string
-	serverAddr   string 
-	serverScheme string 
+	serverAddr   string // last known bind address for display
+	serverScheme string // "https" (default) or "http" (localhost-only mode)
 )
 
 // palette used for cell colour picking in the grid editor
@@ -101,7 +104,11 @@ type User struct {
 	IsAdmin      bool
 	CreatedAt    string
 }
-//auth key
+
+// AuthKey is one issued device/session credential: a user logs in with their
+// username + password once and gets back a key, which every subsequent API
+// call presents instead of the password (id + key, not id + password). Each
+// login issues a brand new key, so a single user can hold one per device.
 type AuthKey struct {
 	Key       string `json:"key"`
 	UserID    int    `json:"user_id"`
@@ -110,7 +117,6 @@ type AuthKey struct {
 	LastUsed  string `json:"last_used"`
 }
 
-// CellItem
 type CellItem struct {
 	Number    int    `json:"number"`
 	MonthCode string `json:"month_code"`
@@ -129,23 +135,15 @@ type Party struct {
 // polygon in map.svg (the table's ID matches that polygon's "id" attribute
 // exactly). Every cell belongs to exactly one Table. StackType controls how
 // items stack inside each of that table's cells:
-//
-//   - "vertical"   — fixed-width racking: every stack level holds StackCols
-//     slots (reels stood on end, shelved directly above one another).
-//   - "horizontal" — tapering pyramid: level Y holds (StackCols-Y) slots,
-//     one fewer per level up (reels lying on their side, nested log-pile
-//     style) — this is the shape the original single-table app always used.
-//
-// If your facility uses the opposite convention, swap the two cases in
-// validateStackPosition; it's the only place this assumption is encoded.
+
 type Table struct {
-	ID        string `json:"id"` // matches a polygon/shape id in map.svg
+	ID        string `json:"id"`
 	Name      string `json:"name"`
-	GridRows  int    `json:"grid_rows"`  // number of cell rows in this table
-	GridCols  int    `json:"grid_cols"`  // number of cell columns in this table
-	StackType string `json:"stack_type"` // "vertical" or "horizontal"
-	StackCols int    `json:"stack_cols"` // row length: slots per stack row/level
-	StackRows int    `json:"stack_rows"` // number of stack levels
+	GridRows  int    `json:"grid_rows"`
+	GridCols  int    `json:"grid_cols"`
+	StackType string `json:"stack_type"`
+	StackCols int    `json:"stack_cols"`
+	StackRows int    `json:"stack_rows"`
 }
 
 // Cell now belongs to exactly one Table (TableID). (row, col) is only
@@ -311,7 +309,6 @@ func updateTrayIcon() {
 	}
 }
 
-
 func loadResource(name string, fallback fyne.Resource) fyne.Resource {
 	path := assetsDir + string(os.PathSeparator) + name
 	if _, err := os.Stat(path); err != nil {
@@ -329,20 +326,20 @@ func loadResource(name string, fallback fyne.Resource) fyne.Resource {
 // ---------------------------------------------------------------------------
 
 func openDB(path string) (*sql.DB, error) {
-	
+	// Add _synchronous=NORMAL for WAL mode performance boost
 	conn, err := sql.Open("sqlite3", path+"?_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=on&_synchronous=NORMAL")
 	if err != nil {
 		return nil, err
 	}
 
-	
+	// WAL mode allows up to 25 concurrent readers without blocking writes
 	conn.SetMaxOpenConns(25)
 	conn.SetMaxIdleConns(5)
 	conn.SetConnMaxLifetime(5 * time.Minute)
 
-
+	// SQLite tuning pragmas for lower latency
 	_, _ = conn.Exec(`
-		PRAGMA cache_size = -200000; -- Allocate 64MB memory cache for reads
+		PRAGMA cache_size = -200000; -- Allocate 200MB memory cache for reads
 		PRAGMA temp_store = MEMORY; -- Store temporary tables in RAM
 	`)
 	return conn, nil
@@ -583,9 +580,9 @@ func updateUserPassword(id int, newPlainPassword string) error {
 // ---------------------------------------------------------------------------
 
 const (
-	authKeyBytes         = 32 // 256 bits of randomness, hex-encoded below
-	authKeysPerUserLimit = 10 // roughly "10 remembered devices" per user
-	authKeyIdleDays      = 7  // a key unused this long is treated as abandoned
+	authKeyBytes         = 32
+	authKeysPerUserLimit = 10
+	authKeyIdleDays      = 7
 )
 
 // newAuthKeyString returns a fresh cryptographically random hex string
@@ -600,7 +597,6 @@ func newAuthKeyString() (string, error) {
 
 // createAuthKey issues a brand new auth key for a just-logged-in user,
 // records it (key, user id, username, timestamps), then runs housekeeping
-// for that user's key list and for stale keys globally.
 func createAuthKey(userID int, username string) (string, error) {
 	key, err := newAuthKeyString()
 	if err != nil {
@@ -2053,7 +2049,19 @@ func buildFiberApp() *fiber.App {
 
 // startServer boots the fiber server on the given port over HTTPS and keeps
 // running until stopServer() is called (survives the main window being
-// hidden). 
+// hidden). TLS is provided one of two ways:
+//
+//   - If a public domain name is configured (Server Info -> TLS Domain),
+//     certmagic — the same automatic-HTTPS library that powers Caddy —
+//     manages a real, browser-trusted certificate via Let's Encrypt,
+//     including renewal. This requires the domain to resolve to this
+//     machine and ports 80/443 reachable for the ACME HTTP-01 challenge.
+//   - Otherwise, a self-signed certificate is generated (once) for
+//     "localhost" and this machine's LAN IP and reused across restarts.
+//     Public CAs cannot issue trusted certificates for bare IP addresses,
+//     so for LAN-only access this is the standard approach: clients must
+//     accept/trust the certificate once (browsers will show a warning the
+//     first time; a fingerprint is logged to help verify it).
 func startServer(port string) {
 	serverMu.Lock()
 	if serverUp {
@@ -2064,6 +2072,9 @@ func startServer(port string) {
 
 	// Ports below 1024 ("privileged" ports, e.g. 80/443) require
 	// Administrator on Windows or root on Linux/macOS. Rather than fail
+	// with an opaque "permission denied" bind error, check up front and
+	// offer to relaunch elevated. This applies even in localhost mode —
+	// the restriction is about the port number, not who can reach it.
 	if isPrivilegedPort(port) && !isElevated() {
 		requestElevationForPort(port)
 		return
@@ -2486,7 +2497,7 @@ func handleValidateLogin(c *fiber.Ctx) error {
 }
 
 func handleGetTable(c *fiber.Ctx) error {
-	u := c.Locals("user").(*User)
+	//u := c.Locals("user").(*User)
 	tableID := c.Query("table_id")
 	if tableID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "table_id query parameter is required"})
@@ -2498,12 +2509,12 @@ func handleGetTable(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(errResp{Error: "failed to read table: " + err.Error()})
 	}
-	logAction(u.Username, "get_table", fmt.Sprintf("table_id=%s from %s", tableID, c.IP()))
+	//logAction(u.Username, "get_table", fmt.Sprintf("table_id=%s from %s", tableID, c.IP()))
 	return c.JSON(cells)
 }
 
 func handleGetCellSize(c *fiber.Ctx) error {
-	u := c.Locals("user").(*User)
+	//u := c.Locals("user").(*User)
 	tableID := c.Query("table_id")
 	if tableID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "table_id query parameter is required"})
@@ -2512,7 +2523,7 @@ func handleGetCellSize(c *fiber.Ctx) error {
 	if terr != nil {
 		return c.Status(fiber.StatusNotFound).JSON(errResp{Error: fmt.Sprintf("no table found with id %q", tableID)})
 	}
-	logAction(u.Username, "get_cellsize", fmt.Sprintf("table_id=%s from %s", tableID, c.IP()))
+	//logAction(u.Username, "get_cellsize", fmt.Sprintf("table_id=%s from %s", tableID, c.IP()))
 	return c.JSON(cellSizeResp{Cols: t.StackCols, Rows: t.StackRows, StackType: t.StackType})
 }
 
@@ -2637,12 +2648,12 @@ func handleTableSet(c *fiber.Ctx) error {
 }
 
 func handleListTables(c *fiber.Ctx) error {
-	u := c.Locals("user").(*User)
+	//u := c.Locals("user").(*User)
 	tables, err := getAllTables()
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(errResp{Error: "failed to read tables: " + err.Error()})
 	}
-	logAction(u.Username, "get_tables", fmt.Sprintf("from %s", c.IP()))
+	//logAction(u.Username, "get_tables", fmt.Sprintf("from %s", c.IP()))
 	return c.JSON(tables)
 }
 
@@ -2692,23 +2703,23 @@ func handleDeleteTable(c *fiber.Ctx) error {
 }
 
 func handleGetMap(c *fiber.Ctx) error {
-	u := c.Locals("user").(*User)
+	//u := c.Locals("user").(*User)
 	data, rerr := os.ReadFile(mapSVGFile)
 	if rerr != nil {
 		return c.Status(fiber.StatusNotFound).JSON(errResp{Error: "no map has been uploaded yet"})
 	}
-	logAction(u.Username, "get_map", fmt.Sprintf("from %s", c.IP()))
+	//logAction(u.Username, "get_map", fmt.Sprintf("from %s", c.IP()))
 	c.Set("Content-Type", "image/svg+xml")
 	return c.Send(data)
 }
 
 func handleGetMonthCodes(c *fiber.Ctx) error {
-	u := c.Locals("user").(*User)
+	//u := c.Locals("user").(*User)
 	codes, err := getAllMonthCodes()
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(errResp{Error: "failed to read month codes: " + err.Error()})
 	}
-	logAction(u.Username, "get_month_codes", fmt.Sprintf("from %s", c.IP()))
+	//logAction(u.Username, "get_month_codes", fmt.Sprintf("from %s", c.IP()))
 	return c.JSON(codes)
 }
 
@@ -2745,12 +2756,12 @@ func handleMonthCodeRemove(c *fiber.Ctx) error {
 }
 
 func handleGetParties(c *fiber.Ctx) error {
-	u := c.Locals("user").(*User)
+	//u := c.Locals("user").(*User)
 	parties, err := getAllParties()
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(errResp{Error: "failed to read parties: " + err.Error()})
 	}
-	logAction(u.Username, "get_parties", fmt.Sprintf("from %s", c.IP()))
+	//logAction(u.Username, "get_parties", fmt.Sprintf("from %s", c.IP()))
 	return c.JSON(parties)
 }
 
@@ -2841,24 +2852,24 @@ func handleBillingArchive(c *fiber.Ctx) error {
 }
 
 func handleGetBilling(c *fiber.Ctx) error {
-	u := c.Locals("user").(*User)
+	//u := c.Locals("user").(*User)
 	billingReels, err := getAllBilling()
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(errResp{Error: "failed to fetch billing records: " + err.Error()})
 	}
-	logAction(u.Username, "get_billing", fmt.Sprintf("fetched %d records from %s", len(billingReels), c.IP()))
+	//logAction(u.Username, "get_billing", fmt.Sprintf("fetched %d records from %s", len(billingReels), c.IP()))
 	return c.JSON(billingReels)
 }
 
 func handleGetArchive(c *fiber.Ctx) error {
-	u := c.Locals("user").(*User)
+	//u := c.Locals("user").(*User)
 	limit := c.QueryInt("limit", 100)
 	offset := c.QueryInt("offset", 0)
 	archiveReels, err := getAllArchive(limit, offset)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(errResp{Error: "failed to fetch archive records: " + err.Error()})
 	}
-	logAction(u.Username, "get_archive", fmt.Sprintf("fetched %d records (offset %d) from %s", len(archiveReels), offset, c.IP()))
+	//logAction(u.Username, "get_archive", fmt.Sprintf("fetched %d records (offset %d) from %s", len(archiveReels), offset, c.IP()))
 	return c.JSON(archiveReels)
 }
 
@@ -2878,18 +2889,18 @@ func handleDispatchUndo(c *fiber.Ctx) error {
 }
 
 func handleGetUnassignedReels(c *fiber.Ctx) error {
-	u := c.Locals("user").(*User)
+	//u := c.Locals("user").(*User)
 	unassigned, err := getUnassignedReels()
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(errResp{Error: "failed to fetch unassigned reels: " + err.Error()})
 	}
-	logAction(u.Username, "get_unassigned_reels", fmt.Sprintf("count=%d from %s", len(unassigned), c.IP()))
+	//logAction(u.Username, "get_unassigned_reels", fmt.Sprintf("count=%d from %s", len(unassigned), c.IP()))
 	return c.JSON(unassigned)
 }
 
 func handleEvents(c *fiber.Ctx) error {
-	u := c.Locals("user").(*User)
-	logAction(u.Username, "subscribe_events", "from "+c.IP())
+	//u := c.Locals("user").(*User)
+	//logAction(u.Username, "subscribe_events", "from "+c.IP())
 
 	c.Set("Content-Type", "text/event-stream")
 	c.Set("Cache-Control", "no-cache")
@@ -2929,14 +2940,14 @@ func handleEvents(c *fiber.Ctx) error {
 }
 
 func handleGetReels(c *fiber.Ctx) error {
-	u := c.Locals("user").(*User)
+	//u := c.Locals("user").(*User)
 	start := c.QueryInt("start", 0)
 	end := c.QueryInt("end", math.MaxInt32)
 	reels, err := getAllReels(start, end)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(errResp{Error: "failed to read reels: " + err.Error()})
 	}
-	logAction(u.Username, "get_reels", fmt.Sprintf("start=%d end=%d results=%d from %s", start, end, len(reels), c.IP()))
+	//logAction(u.Username, "get_reels", fmt.Sprintf("start=%d end=%d results=%d from %s", start, end, len(reels), c.IP()))
 	return c.JSON(reels)
 }
 
@@ -3049,8 +3060,11 @@ func handleSearchMeta(c *fiber.Ctx) error {
 	return c.JSON(meta)
 }
 
+var fastPNGEncoder = png.Encoder{
+	CompressionLevel: png.BestSpeed,
+}
+
 func handleQRCode(c *fiber.Ctx) error {
-	u := c.Locals("user").(*User)
 	text := c.Query("text")
 	if text == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(errResp{Error: "text query parameter is required"})
@@ -3059,21 +3073,34 @@ func handleQRCode(c *fiber.Ctx) error {
 	size := c.QueryInt("size", 256)
 	if size < 32 {
 		size = 32
-	}
-	if size > 2048 {
+	} else if size > 2048 {
 		size = 2048
 	}
 
-	level := parseRecoveryLevel(c.Query("level", "H"))
+	levelStr := c.Query("level", "M") // Defaulting to 'M' saves extra Reed-Solomon CPU cycles
+	level := parseRecoveryLevel(levelStr)
 
-	png, err := qrcode.Encode(text, level, size)
+	// 1. Generate the raw QR matrix (very fast)
+	qr, err := qrcode.New(text, level)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(errResp{Error: "failed to generate QR code: " + err.Error()})
+		return c.Status(fiber.StatusInternalServerError).JSON(errResp{Error: "failed to generate QR matrix: " + err.Error()})
 	}
 
-	logAction(u.Username, "qrcode", fmt.Sprintf("text_len=%d size=%d level=%s", len(text), size, c.Query("level", "H")))
+	// 2. Render image matrix
+	img := qr.Image(size)
+
+	// 3. Encode to PNG using BestSpeed compression
+	var buf bytes.Buffer
+	if err := fastPNGEncoder.Encode(&buf, img); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(errResp{Error: "failed to encode PNG: " + err.Error()})
+	}
+
+	// 4. Non-blocking async logging (goroutine used appropriately for I/O)
+	u := c.Locals("user").(*User)
+	go logAction(u.Username, "qrcode", fmt.Sprintf("text_len=%d size=%d level=%s", len(text), size, levelStr))
+
 	c.Set("Content-Type", "image/png")
-	return c.Send(png)
+	return c.Send(buf.Bytes())
 }
 
 type dispatchUndoReq struct {
